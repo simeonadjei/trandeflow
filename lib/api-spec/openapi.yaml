@@ -17,6 +17,8 @@ tags:
     description: Pattern analysis operations
   - name: withdrawals
     description: Withdrawal operations
+  - name: deposits
+    description: Deposit operations
   - name: assets
     description: Tradeable asset operations
 
@@ -178,6 +180,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AutoInvestStatus"
+
+  /deposits:
+    get:
+      operationId: listDeposits
+      tags: [deposits]
+      summary: List deposit history
+      responses:
+        "200":
+          description: Deposit history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Deposit"
+    post:
+      operationId: createDeposit
+      tags: [deposits]
+      summary: Initiate a MoMo deposit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DepositInput"
+      responses:
+        "201":
+          description: Deposit initiated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deposit"
 
   /withdrawals:
     get:
@@ -416,6 +450,43 @@ components:
           type: string
         completedAt:
           type: ["string", "null"]
+
+    Deposit:
+      type: object
+      required: [id, amount, currency, momoNumber, momoProvider, reference, status, createdAt]
+      properties:
+        id:
+          type: integer
+        amount:
+          type: number
+        currency:
+          type: string
+        momoNumber:
+          type: string
+        momoProvider:
+          type: string
+          enum: [MTN, VODAFONE, AIRTELTIGO]
+        reference:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, PROCESSING, COMPLETED, FAILED]
+        createdAt:
+          type: string
+        completedAt:
+          type: ["string", "null"]
+
+    DepositInput:
+      type: object
+      required: [amount, momoNumber, momoProvider]
+      properties:
+        amount:
+          type: number
+        momoNumber:
+          type: string
+        momoProvider:
+          type: string
+          enum: [MTN, VODAFONE, AIRTELTIGO]
 
     WithdrawalInput:
       type: object

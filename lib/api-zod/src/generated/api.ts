@@ -160,6 +160,33 @@ export const GetAutoInvestStatusResponse = zod.object({
 
 
 /**
+ * @summary List deposit history
+ */
+export const ListDepositsResponseItem = zod.object({
+  "id": zod.number(),
+  "amount": zod.number(),
+  "currency": zod.string(),
+  "momoNumber": zod.string(),
+  "momoProvider": zod.enum(['MTN', 'VODAFONE', 'AIRTELTIGO']),
+  "reference": zod.string(),
+  "status": zod.enum(['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED']),
+  "createdAt": zod.string(),
+  "completedAt": zod.string().nullish()
+})
+export const ListDepositsResponse = zod.array(ListDepositsResponseItem)
+
+
+/**
+ * @summary Initiate a MoMo deposit
+ */
+export const CreateDepositBody = zod.object({
+  "amount": zod.number(),
+  "momoNumber": zod.string(),
+  "momoProvider": zod.enum(['MTN', 'VODAFONE', 'AIRTELTIGO'])
+})
+
+
+/**
  * @summary List withdrawal history
  */
 export const ListWithdrawalsResponseItem = zod.object({

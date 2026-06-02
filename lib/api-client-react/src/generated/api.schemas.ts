@@ -167,6 +167,53 @@ export interface Withdrawal {
   completedAt?: string | null;
 }
 
+export type DepositMomoProvider = typeof DepositMomoProvider[keyof typeof DepositMomoProvider];
+
+
+export const DepositMomoProvider = {
+  MTN: 'MTN',
+  VODAFONE: 'VODAFONE',
+  AIRTELTIGO: 'AIRTELTIGO',
+} as const;
+
+export type DepositStatus = typeof DepositStatus[keyof typeof DepositStatus];
+
+
+export const DepositStatus = {
+  PENDING: 'PENDING',
+  PROCESSING: 'PROCESSING',
+  COMPLETED: 'COMPLETED',
+  FAILED: 'FAILED',
+} as const;
+
+export interface Deposit {
+  id: number;
+  amount: number;
+  currency: string;
+  momoNumber: string;
+  momoProvider: DepositMomoProvider;
+  reference: string;
+  status: DepositStatus;
+  createdAt: string;
+  /** @nullable */
+  completedAt?: string | null;
+}
+
+export type DepositInputMomoProvider = typeof DepositInputMomoProvider[keyof typeof DepositInputMomoProvider];
+
+
+export const DepositInputMomoProvider = {
+  MTN: 'MTN',
+  VODAFONE: 'VODAFONE',
+  AIRTELTIGO: 'AIRTELTIGO',
+} as const;
+
+export interface DepositInput {
+  amount: number;
+  momoNumber: string;
+  momoProvider: DepositInputMomoProvider;
+}
+
 export type WithdrawalInputMomoProvider = typeof WithdrawalInputMomoProvider[keyof typeof WithdrawalInputMomoProvider];
 
 
