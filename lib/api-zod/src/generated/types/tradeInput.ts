@@ -12,4 +12,5 @@ export interface TradeInput {
   direction: TradeInputDirection;
   amount: number;
   duration: number;
+  isDemo?: boolean;
 }

@@ -114,6 +114,7 @@ export const ListTradesResponseItem = zod.object({
   "payout": zod.number().optional(),
   "status": zod.enum(['OPEN', 'WIN', 'LOSS', 'DRAW']),
   "isAuto": zod.boolean().optional(),
+  "isDemo": zod.boolean().optional(),
   "createdAt": zod.string(),
   "closedAt": zod.string().nullish()
 })
@@ -127,7 +128,8 @@ export const PlaceTradeBody = zod.object({
   "symbol": zod.string(),
   "direction": zod.enum(['UP', 'DOWN']),
   "amount": zod.number(),
-  "duration": zod.number()
+  "duration": zod.number(),
+  "isDemo": zod.boolean().optional()
 })
 
 

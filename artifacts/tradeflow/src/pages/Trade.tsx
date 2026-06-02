@@ -7,7 +7,8 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNotifications, useAutoTradeNotifications } from "../lib/useNotifications";
-import { TrendingUp, TrendingDown, ChevronDown, ArrowUpCircle, ArrowDownCircle, Bot, Clock, CheckCircle, XCircle, Settings, Activity, Bell, BellOff } from "lucide-react";
+import { useDemoMode } from "../lib/DemoModeContext";
+import { TrendingUp, TrendingDown, ChevronDown, ArrowUpCircle, ArrowDownCircle, Bot, Clock, CheckCircle, XCircle, Settings, Activity, Bell, BellOff, FlaskConical } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart, Bar, Line
 } from "recharts";
@@ -129,6 +130,7 @@ export default function Trade() {
     typeof Notification !== "undefined" ? Notification.permission : "default"
   );
 
+  const { isDemo, toggleDemo } = useDemoMode();
   const queryClient = useQueryClient();
   const { requestPermission, notify } = useNotifications();
 
@@ -178,11 +180,13 @@ export default function Trade() {
   });
 
   const selectedAsset = assets?.find((a) => a.symbol === selectedSymbol);
-  const openTrades = trades?.filter((t) => t.status === "OPEN") ?? [];
-  const closedTrades = trades?.filter((t) => t.status !== "OPEN").slice(0, 15) ?? [];
+  const displayBalance = isDemo ? (account?.demoBalance ?? 0) : (account?.balance ?? 0);
+  const modeTrades = trades?.filter((t) => (isDemo ? t.isDemo : !t.isDemo)) ?? [];
+  const openTrades = modeTrades.filter((t) => t.status === "OPEN");
+  const closedTrades = modeTrades.filter((t) => t.status !== "OPEN").slice(0, 15);
 
   const handleTrade = (direction: "UP" | "DOWN") => {
-    placeTrade.mutate({ data: { symbol: selectedSymbol, direction, amount, duration } });
+    placeTrade.mutate({ data: { symbol: selectedSymbol, direction, amount, duration, isDemo } });
   };
 
   const signalColor = pattern?.signal === "BUY" ? "text-profit" : pattern?.signal === "SELL" ? "text-loss" : "text-yellow-400";
@@ -196,13 +200,50 @@ export default function Trade() {
           <span>Trade<span className="text-primary">Flow</span></span>
         </Link>
         <div className="flex items-center gap-3 text-sm">
-          {account && <span className="font-bold text-primary">GHS {account.balance.toFixed(2)}</span>}
+          {/* Demo / Real toggle */}
+          <button
+            onClick={toggleDemo}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+              isDemo
+                ? "bg-purple-500/20 border-purple-500/50 text-purple-300 hover:bg-purple-500/30"
+                : "bg-profit/10 border-profit/30 text-profit hover:bg-profit/20"
+            }`}
+          >
+            <FlaskConical className="w-3.5 h-3.5" />
+            {isDemo ? "DEMO" : "REAL"}
+          </button>
+
+          {/* Balance */}
+          <div className="text-right">
+            <div className={`font-bold text-sm ${isDemo ? "text-purple-300" : "text-primary"}`}>
+              GHS {displayBalance.toFixed(2)}
+            </div>
+            <div className="text-[10px] text-muted-foreground leading-none">{isDemo ? "Demo" : "Real"}</div>
+          </div>
+
           <Link href="/wallet" className="px-3 py-1 bg-secondary rounded-md text-xs font-medium hover:bg-secondary/80 transition-colors">Wallet</Link>
           <Link href="/" className="px-3 py-1 bg-secondary rounded-md text-xs font-medium hover:bg-secondary/80 transition-colors">Home</Link>
         </div>
       </div>
 
-      <div className="pt-14 grid grid-cols-1 lg:grid-cols-3 min-h-screen">
+      {/* Demo mode banner */}
+      {isDemo && (
+        <div className="fixed top-14 left-0 right-0 z-40 bg-purple-500/15 border-b border-purple-500/30 px-4 py-2 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-xs text-purple-300">
+            <FlaskConical className="w-3.5 h-3.5" />
+            <span className="font-semibold">DEMO MODE</span>
+            <span className="text-purple-400/70">— You're trading with virtual GHS. No real money at risk.</span>
+          </div>
+          <button
+            onClick={toggleDemo}
+            className="text-xs text-purple-300 hover:text-purple-100 font-semibold border border-purple-500/40 rounded px-2 py-0.5 hover:bg-purple-500/20 transition-colors"
+          >
+            Switch to Real →
+          </button>
+        </div>
+      )}
+
+      <div className={`${isDemo ? "pt-[92px]" : "pt-14"} grid grid-cols-1 lg:grid-cols-3 min-h-screen`}>
         {/* Left — Chart + Pattern */}
         <div className="lg:col-span-2 border-r border-border flex flex-col">
           {/* Asset selector */}
@@ -356,9 +397,15 @@ export default function Trade() {
         {/* Right — Trade Panel */}
         <div className="flex flex-col border-t lg:border-t-0 border-border">
           {/* Trade Controls */}
-          <div className="p-4 border-b border-border">
+          <div className={`p-4 border-b border-border ${isDemo ? "bg-purple-500/5" : ""}`}>
             <h3 className="font-bold mb-4 flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-primary" /> Place Trade
+              <TrendingUp className={`w-4 h-4 ${isDemo ? "text-purple-400" : "text-primary"}`} />
+              Place Trade
+              {isDemo && (
+                <span className="ml-1 px-2 py-0.5 bg-purple-500/20 border border-purple-500/40 text-purple-300 text-xs rounded-full font-semibold flex items-center gap-1">
+                  <FlaskConical className="w-3 h-3" /> DEMO
+                </span>
+              )}
             </h3>
 
             {/* Amount */}

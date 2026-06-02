@@ -22,6 +22,7 @@ export interface Trade {
   payout?: number;
   status: TradeStatus;
   isAuto?: boolean;
+  isDemo?: boolean;
   createdAt: string;
   /** @nullable */
   closedAt?: string | null;

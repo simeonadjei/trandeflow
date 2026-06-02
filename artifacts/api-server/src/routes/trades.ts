@@ -35,6 +35,7 @@ function mapTrade(t: typeof tradesTable.$inferSelect) {
     payout: parseFloat(t.payout as string),
     status: t.status,
     isAuto: t.isAuto,
+    isDemo: t.isDemo,
     createdAt: t.createdAt.toISOString(),
     closedAt: t.closedAt ? t.closedAt.toISOString() : null,
   };
@@ -56,9 +57,24 @@ router.get("/trades", async (req, res) => {
 router.post("/trades", async (req, res) => {
   try {
     const body = PlaceTradeBody.parse(req.body);
+    const isDemo = body.isDemo ?? false;
     const entryPrice = getPrice(body.symbol);
     const payout = 85;
     const duration = body.duration ?? 60;
+
+    // Check balance
+    const account = await db.query.accountsTable.findFirst({
+      where: eq(accountsTable.id, 1),
+    });
+    if (!account) return res.status(404).json({ error: "Account not found" });
+
+    const currentBalance = isDemo
+      ? parseFloat(account.demoBalance as string)
+      : parseFloat(account.balance as string);
+
+    if (body.amount > currentBalance) {
+      return res.status(400).json({ error: "Insufficient balance" });
+    }
 
     const [trade] = await db.insert(tradesTable).values({
       accountId: 1,
@@ -70,6 +86,7 @@ router.post("/trades", async (req, res) => {
       payout: payout.toString(),
       status: "OPEN",
       isAuto: false,
+      isDemo,
     }).returning();
 
     // Simulate trade close after duration
@@ -85,35 +102,34 @@ router.post("/trades", async (req, res) => {
         const status = won ? "WIN" : "LOSS";
 
         await db.update(tradesTable)
-          .set({
-            exitPrice: exitPrice.toString(),
-            profit: profit.toString(),
-            status,
-            closedAt: new Date(),
-          })
+          .set({ exitPrice: exitPrice.toString(), profit: profit.toString(), status, closedAt: new Date() })
           .where(eq(tradesTable.id, trade.id));
 
-        // Update account balance and stats
-        const account = await db.query.accountsTable.findFirst({
-          where: eq(accountsTable.id, 1),
-        });
-        if (account) {
-          const newBalance = parseFloat(account.balance as string) + profit;
-          const newTotal = account.totalTrades + 1;
-          const wins = Math.round(parseFloat(account.winRate as string) * account.totalTrades / 100) + (won ? 1 : 0);
-          const newWinRate = (wins / newTotal) * 100;
-          const newProfit = parseFloat(account.totalProfit as string) + profit;
-
-          await db.update(accountsTable)
-            .set({
-              balance: Math.max(0, newBalance).toString(),
-              totalTrades: newTotal,
-              winRate: newWinRate.toFixed(2),
-              totalProfit: newProfit.toFixed(2),
-            })
-            .where(eq(accountsTable.id, 1));
+        // Update the right balance
+        const fresh = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
+        if (fresh) {
+          if (isDemo) {
+            const newDemo = Math.max(0, parseFloat(fresh.demoBalance as string) + profit);
+            await db.update(accountsTable)
+              .set({ demoBalance: newDemo.toFixed(2) })
+              .where(eq(accountsTable.id, 1));
+          } else {
+            const newBalance = parseFloat(fresh.balance as string) + profit;
+            const newTotal = fresh.totalTrades + 1;
+            const wins = Math.round(parseFloat(fresh.winRate as string) * fresh.totalTrades / 100) + (won ? 1 : 0);
+            const newWinRate = (wins / newTotal) * 100;
+            const newProfit = parseFloat(fresh.totalProfit as string) + profit;
+            await db.update(accountsTable)
+              .set({
+                balance: Math.max(0, newBalance).toFixed(2),
+                totalTrades: newTotal,
+                winRate: newWinRate.toFixed(2),
+                totalProfit: newProfit.toFixed(2),
+              })
+              .where(eq(accountsTable.id, 1));
+          }
         }
-      } catch (e) {
+      } catch (_e) {
         // ignore background errors
       }
     }, duration * 1000);
@@ -136,9 +152,7 @@ router.post("/trades/auto", async (req, res) => {
       })
       .where(eq(accountsTable.id, 1));
 
-    const account = await db.query.accountsTable.findFirst({
-      where: eq(accountsTable.id, 1),
-    });
+    const account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
 
     res.json({
       enabled: account?.autoInvestEnabled ?? body.enabled,
@@ -154,9 +168,7 @@ router.post("/trades/auto", async (req, res) => {
 
 router.get("/trades/auto/status", async (req, res) => {
   try {
-    const account = await db.query.accountsTable.findFirst({
-      where: eq(accountsTable.id, 1),
-    });
+    const account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
     res.json({
       enabled: account?.autoInvestEnabled ?? false,
       stakeAmount: parseFloat(account?.autoInvestStake as string ?? "10"),

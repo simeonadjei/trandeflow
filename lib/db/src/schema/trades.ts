@@ -15,6 +15,7 @@ export const tradesTable = pgTable("trades", {
   payout: numeric("payout", { precision: 5, scale: 2 }).notNull().default("85.00"),
   status: text("status").notNull().default("OPEN"), // OPEN | WIN | LOSS | DRAW
   isAuto: boolean("is_auto").notNull().default(false),
+  isDemo: boolean("is_demo").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   closedAt: timestamp("closed_at"),
 });
