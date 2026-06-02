@@ -6,7 +6,8 @@ import {
   getListTradesQueryKey, getGetAccountQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { TrendingUp, TrendingDown, ChevronDown, ArrowUpCircle, ArrowDownCircle, Bot, Clock, CheckCircle, XCircle, Settings, Activity } from "lucide-react";
+import { useNotifications, useAutoTradeNotifications } from "../lib/useNotifications";
+import { TrendingUp, TrendingDown, ChevronDown, ArrowUpCircle, ArrowDownCircle, Bot, Clock, CheckCircle, XCircle, Settings, Activity, Bell, BellOff } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart, Bar, Line
 } from "recharts";
@@ -124,14 +125,32 @@ export default function Trade() {
   const [showAssets, setShowAssets] = useState(false);
   const [autoSettings, setAutoSettings] = useState({ stake: 10, maxDaily: 10 });
   const [showSettings, setShowSettings] = useState(false);
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
+    typeof Notification !== "undefined" ? Notification.permission : "default"
+  );
 
   const queryClient = useQueryClient();
+  const { requestPermission, notify } = useNotifications();
+
   const { data: assets } = useListAssets();
   const { data: candles } = useGetCandles(selectedSymbol, { query: { enabled: !!selectedSymbol } });
   const { data: pattern } = useAnalyzePattern(selectedSymbol, { query: { enabled: !!selectedSymbol, refetchInterval: 15000 } });
   const { data: trades, refetch: refetchTrades } = useListTrades({ query: { refetchInterval: 5000 } });
   const { data: autoStatus, refetch: refetchAuto } = useGetAutoInvestStatus();
   const { data: account } = useGetAccount({ query: { refetchInterval: 8000 } });
+
+  // Map trades into lightweight snapshots for notification tracking
+  const tradeSnapshots = trades?.map((t) => ({
+    id: t.id,
+    status: t.status,
+    isAuto: t.isAuto ?? false,
+    symbol: t.symbol,
+    direction: t.direction as "UP" | "DOWN",
+    amount: t.amount,
+    profit: t.profit,
+  }));
+
+  useAutoTradeNotifications(tradeSnapshots, autoStatus?.enabled ?? false, notify);
 
   const placeTrade = usePlaceTrade({
     mutation: {
@@ -146,7 +165,16 @@ export default function Trade() {
   });
 
   const toggleAuto = useToggleAutoInvest({
-    mutation: { onSuccess: () => refetchAuto() },
+    mutation: {
+      onSuccess: async () => {
+        refetchAuto();
+        // When enabling, ask for notification permission
+        if (!autoStatus?.enabled) {
+          const granted = await requestPermission();
+          setNotifPermission(granted ? "granted" : "denied");
+        }
+      },
+    },
   });
 
   const selectedAsset = assets?.find((a) => a.symbol === selectedSymbol);
@@ -430,9 +458,30 @@ export default function Trade() {
             </div>
 
             {autoStatus?.enabled && (
-              <div className="flex items-center gap-2 text-xs text-profit mb-2">
-                <div className="w-1.5 h-1.5 bg-profit rounded-full live-pulse" />
-                Bot is active — trading automatically
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 text-xs text-profit">
+                  <div className="w-1.5 h-1.5 bg-profit rounded-full live-pulse" />
+                  Bot is active — trading automatically
+                </div>
+                {notifPermission === "granted" ? (
+                  <span className="flex items-center gap-1 text-xs text-profit">
+                    <Bell className="w-3 h-3" /> Alerts ON
+                  </span>
+                ) : notifPermission === "denied" ? (
+                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <BellOff className="w-3 h-3" /> Alerts blocked
+                  </span>
+                ) : (
+                  <button
+                    onClick={async () => {
+                      const granted = await requestPermission();
+                      setNotifPermission(granted ? "granted" : "denied");
+                    }}
+                    className="flex items-center gap-1 text-xs text-primary hover:underline"
+                  >
+                    <Bell className="w-3 h-3" /> Enable alerts
+                  </button>
+                )}
               </div>
             )}
 
