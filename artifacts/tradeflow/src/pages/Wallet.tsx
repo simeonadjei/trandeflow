@@ -6,6 +6,7 @@ import {
   getListWithdrawalsQueryKey, getGetAccountQueryKey, getListDepositsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "../lib/AuthContext";
 import {
   TrendingUp, Wallet as WalletIcon, ArrowDownToLine, ArrowUpToLine,
   CheckCircle, Clock, XCircle, Loader2, BarChart2, Copy, RefreshCw,
@@ -36,6 +37,7 @@ function ProviderBadge({ provider }: { provider: string }) {
 }
 
 export default function Wallet() {
+  const { user, logout } = useAuth();
   const [tab, setTab] = useState<"deposit" | "withdraw">("deposit");
   const [amount, setAmount] = useState("");
   const [momoNumber, setMomoNumber] = useState("");
@@ -118,6 +120,16 @@ export default function Wallet() {
         </Link>
         <div className="flex items-center gap-2">
           <Link href="/trade" className="px-3 py-1 bg-primary text-primary-foreground text-xs font-semibold rounded-md hover:opacity-90 transition-opacity">Trade</Link>
+          {user ? (
+            <>
+              {user.role === "admin" && (
+                <Link href="/admin" className="px-3 py-1 bg-primary/20 border border-primary/30 text-primary text-xs font-bold rounded-md hover:bg-primary/30 transition-colors">Admin</Link>
+              )}
+              <button onClick={logout} className="px-3 py-1 bg-secondary rounded-md text-xs font-medium hover:bg-secondary/80 transition-colors text-muted-foreground">Logout</button>
+            </>
+          ) : (
+            <Link href="/login" className="px-3 py-1 bg-secondary border border-border text-xs font-medium rounded-md hover:bg-secondary/80 transition-colors">Login</Link>
+          )}
         </div>
       </div>
 

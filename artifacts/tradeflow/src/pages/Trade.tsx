@@ -8,6 +8,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useNotifications, useAutoTradeNotifications } from "../lib/useNotifications";
 import { useDemoMode } from "../lib/DemoModeContext";
+import { useAuth } from "../lib/AuthContext";
 import { TrendingUp, TrendingDown, ChevronDown, ArrowUpCircle, ArrowDownCircle, Bot, Clock, CheckCircle, XCircle, Settings, Activity, Bell, BellOff, FlaskConical } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart, Bar, Line
@@ -131,6 +132,7 @@ export default function Trade() {
   );
 
   const { isDemo, toggleDemo } = useDemoMode();
+  const { user, logout } = useAuth();
   const queryClient = useQueryClient();
   const { requestPermission, notify } = useNotifications();
 
@@ -223,6 +225,16 @@ export default function Trade() {
 
           <Link href="/wallet" className="px-3 py-1 bg-secondary rounded-md text-xs font-medium hover:bg-secondary/80 transition-colors">Wallet</Link>
           <Link href="/" className="px-3 py-1 bg-secondary rounded-md text-xs font-medium hover:bg-secondary/80 transition-colors">Home</Link>
+          {user ? (
+            <div className="flex items-center gap-2">
+              {user.role === "admin" && (
+                <Link href="/admin" className="px-3 py-1 bg-primary/20 border border-primary/30 text-primary text-xs font-bold rounded-md hover:bg-primary/30 transition-colors">Admin</Link>
+              )}
+              <button onClick={logout} className="px-3 py-1 bg-secondary rounded-md text-xs font-medium hover:bg-secondary/80 transition-colors text-muted-foreground">Logout</button>
+            </div>
+          ) : (
+            <Link href="/login" className="px-3 py-1 bg-primary text-primary-foreground text-xs font-bold rounded-md hover:opacity-90 transition-opacity">Login</Link>
+          )}
         </div>
       </div>
 

@@ -1,0 +1,2 @@
+- [Auth system](auth-system.md) — JWT via SESSION_SECRET; admin seeded as admin@tradeflow.gh/Admin@2024; no codegen needed for auth/admin routes.
+- [Platform revenue model](platform-revenue.md) — 15% cut on wins (WIN_CUT), 100% on losses (LOSS_KEEP); tracked in platform_revenue table; demo trades exempt.

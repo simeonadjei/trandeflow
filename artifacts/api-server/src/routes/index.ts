@@ -5,10 +5,14 @@ import assetsRouter from "./assets";
 import tradesRouter from "./trades";
 import withdrawalsRouter from "./withdrawals";
 import depositsRouter from "./deposits";
+import authRouter from "./auth";
+import adminRouter from "./admin";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
+router.use(authRouter);
+router.use(adminRouter);
 router.use(accountRouter);
 router.use(assetsRouter);
 router.use(tradesRouter);
