@@ -1,22 +1,31 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: TradeFlow API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: account
+    description: Account and balance operations
+  - name: trades
+    description: Trading operations
+  - name: patterns
+    description: Pattern analysis operations
+  - name: withdrawals
+    description: Withdrawal operations
+  - name: assets
+    description: Tradeable asset operations
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +33,184 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /account:
+    get:
+      operationId: getAccount
+      tags: [account]
+      summary: Get current account info and balance
+      responses:
+        "200":
+          description: Account info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Account"
+
+  /account/stats:
+    get:
+      operationId: getAccountStats
+      tags: [account]
+      summary: Get trading statistics summary
+      responses:
+        "200":
+          description: Stats summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountStats"
+
+  /assets:
+    get:
+      operationId: listAssets
+      tags: [assets]
+      summary: List all tradeable assets with current prices
+      responses:
+        "200":
+          description: List of assets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Asset"
+
+  /assets/{symbol}/candles:
+    get:
+      operationId: getCandles
+      tags: [assets]
+      summary: Get candlestick data for an asset
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Candle data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Candle"
+
+  /assets/{symbol}/pattern:
+    get:
+      operationId: analyzePattern
+      tags: [patterns]
+      summary: Analyze current chart pattern and get trade signal
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Pattern analysis result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PatternAnalysis"
+
+  /trades:
+    get:
+      operationId: listTrades
+      tags: [trades]
+      summary: List recent trade history
+      responses:
+        "200":
+          description: Trade history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Trade"
+    post:
+      operationId: placeTrade
+      tags: [trades]
+      summary: Place a new trade
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TradeInput"
+      responses:
+        "201":
+          description: Trade placed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Trade"
+
+  /trades/auto:
+    post:
+      operationId: toggleAutoInvest
+      tags: [trades]
+      summary: Enable or disable auto-invest mode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AutoInvestInput"
+      responses:
+        "200":
+          description: Auto-invest status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoInvestStatus"
+
+  /trades/auto/status:
+    get:
+      operationId: getAutoInvestStatus
+      tags: [trades]
+      summary: Get current auto-invest status
+      responses:
+        "200":
+          description: Auto-invest status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoInvestStatus"
+
+  /withdrawals:
+    get:
+      operationId: listWithdrawals
+      tags: [withdrawals]
+      summary: List withdrawal history
+      responses:
+        "200":
+          description: Withdrawal history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Withdrawal"
+    post:
+      operationId: requestWithdrawal
+      tags: [withdrawals]
+      summary: Request a withdrawal to MoMo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WithdrawalInput"
+      responses:
+        "201":
+          description: Withdrawal requested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Withdrawal"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +221,210 @@ components:
       required:
         - status
 
+    Account:
+      type: object
+      required: [id, name, balance, demoBalance, currency, autoInvestEnabled]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        balance:
+          type: number
+        demoBalance:
+          type: number
+        currency:
+          type: string
+        autoInvestEnabled:
+          type: boolean
+        totalProfit:
+          type: number
+        totalTrades:
+          type: integer
+        winRate:
+          type: number
+
+    AccountStats:
+      type: object
+      required: [totalProfit, totalTrades, winRate, todayProfit, streak]
+      properties:
+        totalProfit:
+          type: number
+        totalTrades:
+          type: integer
+        winRate:
+          type: number
+        todayProfit:
+          type: number
+        streak:
+          type: integer
+        bestTrade:
+          type: number
+        avgReturn:
+          type: number
+
+    Asset:
+      type: object
+      required: [symbol, name, price, change, changePercent, payout]
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+        price:
+          type: number
+        change:
+          type: number
+        changePercent:
+          type: number
+        payout:
+          type: number
+        trending:
+          type: boolean
+
+    Candle:
+      type: object
+      required: [time, open, high, low, close, volume]
+      properties:
+        time:
+          type: integer
+        open:
+          type: number
+        high:
+          type: number
+        low:
+          type: number
+        close:
+          type: number
+        volume:
+          type: number
+
+    PatternAnalysis:
+      type: object
+      required: [symbol, pattern, signal, confidence, reason]
+      properties:
+        symbol:
+          type: string
+        pattern:
+          type: string
+        signal:
+          type: string
+          enum: [BUY, SELL, HOLD]
+        confidence:
+          type: number
+        reason:
+          type: string
+        supportLevel:
+          type: number
+        resistanceLevel:
+          type: number
+        rsi:
+          type: number
+        trend:
+          type: string
+
+    Trade:
+      type: object
+      required: [id, symbol, direction, amount, duration, entryPrice, status, createdAt]
+      properties:
+        id:
+          type: integer
+        symbol:
+          type: string
+        direction:
+          type: string
+          enum: [UP, DOWN]
+        amount:
+          type: number
+        duration:
+          type: integer
+        entryPrice:
+          type: number
+        exitPrice:
+          type: ["number", "null"]
+        profit:
+          type: ["number", "null"]
+        payout:
+          type: number
+        status:
+          type: string
+          enum: [OPEN, WIN, LOSS, DRAW]
+        isAuto:
+          type: boolean
+        createdAt:
+          type: string
+        closedAt:
+          type: ["string", "null"]
+
+    TradeInput:
+      type: object
+      required: [symbol, direction, amount, duration]
+      properties:
+        symbol:
+          type: string
+        direction:
+          type: string
+          enum: [UP, DOWN]
+        amount:
+          type: number
+        duration:
+          type: integer
+
+    AutoInvestInput:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+        stakeAmount:
+          type: number
+        maxDailyTrades:
+          type: integer
+
+    AutoInvestStatus:
+      type: object
+      required: [enabled, stakeAmount, maxDailyTrades, tradesToday]
+      properties:
+        enabled:
+          type: boolean
+        stakeAmount:
+          type: number
+        maxDailyTrades:
+          type: integer
+        tradesToday:
+          type: integer
+
+    Withdrawal:
+      type: object
+      required: [id, amount, currency, momoNumber, momoProvider, status, createdAt]
+      properties:
+        id:
+          type: integer
+        amount:
+          type: number
+        currency:
+          type: string
+        momoNumber:
+          type: string
+        momoProvider:
+          type: string
+          enum: [MTN, VODAFONE, AIRTELTIGO]
+        status:
+          type: string
+          enum: [PENDING, PROCESSING, COMPLETED, FAILED]
+        createdAt:
+          type: string
+        completedAt:
+          type: ["string", "null"]
+
+    WithdrawalInput:
+      type: object
+      required: [amount, momoNumber, momoProvider]
+      properties:
+        amount:
+          type: number
+        momoNumber:
+          type: string
+        momoProvider:
+          type: string
+          enum: [MTN, VODAFONE, AIRTELTIGO]
