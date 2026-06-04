@@ -2,6 +2,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { accountsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import { getScanStatus } from "../lib/autoInvest";
 
 const router = Router();
 
@@ -68,6 +69,11 @@ router.get("/account/stats", async (req, res) => {
     req.log.error(err);
     res.status(500).json({ error: "Failed to get stats" });
   }
+});
+
+// Sniper bot scan status — live read from memory
+router.get("/auto-invest/scan", (_req, res) => {
+  res.json(getScanStatus());
 });
 
 export default router;

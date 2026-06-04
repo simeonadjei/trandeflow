@@ -9,7 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNotifications, useAutoTradeNotifications } from "../lib/useNotifications";
 import { useDemoMode } from "../lib/DemoModeContext";
 import { useAuth } from "../lib/AuthContext";
-import { TrendingUp, TrendingDown, ChevronDown, ArrowUpCircle, ArrowDownCircle, Bot, Clock, CheckCircle, XCircle, Settings, Activity, Bell, BellOff, FlaskConical } from "lucide-react";
+import { TrendingUp, TrendingDown, ChevronDown, ArrowUpCircle, ArrowDownCircle, Bot, Clock, CheckCircle, XCircle, Activity, Bell, BellOff, FlaskConical, Target, Crosshair, Radar, Zap } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart, Bar, Line
 } from "recharts";
@@ -125,8 +125,7 @@ export default function Trade() {
   const [amount, setAmount] = useState(50);
   const [duration, setDuration] = useState(60);
   const [showAssets, setShowAssets] = useState(false);
-  const [autoSettings, setAutoSettings] = useState({ stake: 10, maxDaily: 10 });
-  const [showSettings, setShowSettings] = useState(false);
+  const [scanStatus, setScanStatus] = useState<any>(null);
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
     typeof Notification !== "undefined" ? Notification.permission : "default"
   );
@@ -135,6 +134,15 @@ export default function Trade() {
   const { user, logout } = useAuth();
   const queryClient = useQueryClient();
   const { requestPermission, notify } = useNotifications();
+
+  // Poll sniper bot scan status every 5s
+  useEffect(() => {
+    const fetchScan = () =>
+      fetch("/api/auto-invest/scan").then(r => r.json()).then(setScanStatus).catch(() => {});
+    fetchScan();
+    const iv = setInterval(fetchScan, 5000);
+    return () => clearInterval(iv);
+  }, []);
 
   const { data: assets } = useListAssets();
   const { data: candles } = useGetCandles(selectedSymbol, { query: { enabled: !!selectedSymbol } });
@@ -496,19 +504,26 @@ export default function Trade() {
             </div>
           </div>
 
-          {/* Auto-Invest */}
+          {/* ── Sniper Bot ── */}
           <div className="p-4 border-b border-border">
+            {/* Header row */}
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <Bot className="w-4 h-4 text-primary" />
-                <span className="font-bold text-sm">Auto-Invest Bot</span>
+                <Crosshair className="w-4 h-4 text-primary" />
+                <span className="font-bold text-sm">Sniper Bot</span>
+                <span className="px-1.5 py-0.5 bg-primary/20 border border-primary/30 text-primary text-[10px] font-bold rounded-full">8/8</span>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => setShowSettings(!showSettings)} className="p-1 rounded hover:bg-secondary transition-colors">
-                  <Settings className="w-3.5 h-3.5 text-muted-foreground" />
-                </button>
+                {notifPermission === "granted" ? (
+                  <span className="flex items-center gap-1 text-xs text-profit"><Bell className="w-3 h-3" /></span>
+                ) : notifPermission !== "denied" ? (
+                  <button onClick={async () => { const g = await requestPermission(); setNotifPermission(g ? "granted" : "denied"); }}
+                    className="text-xs text-primary hover:underline flex items-center gap-1">
+                    <Bell className="w-3 h-3" />
+                  </button>
+                ) : null}
                 <button
-                  onClick={() => toggleAuto.mutate({ data: { enabled: !autoStatus?.enabled, stakeAmount: autoSettings.stake, maxDailyTrades: autoSettings.maxDaily } })}
+                  onClick={() => toggleAuto.mutate({ data: { enabled: !autoStatus?.enabled, stakeAmount: 10, maxDailyTrades: 999 } })}
                   className={`relative w-10 h-5 rounded-full transition-colors ${autoStatus?.enabled ? "bg-profit" : "bg-secondary"}`}
                 >
                   <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all shadow-sm ${autoStatus?.enabled ? "left-5" : "left-0.5"}`} />
@@ -516,67 +531,73 @@ export default function Trade() {
               </div>
             </div>
 
-            {autoStatus?.enabled && (
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2 text-xs text-profit">
-                  <div className="w-1.5 h-1.5 bg-profit rounded-full live-pulse" />
-                  Bot is active — trading automatically
-                </div>
-                {notifPermission === "granted" ? (
-                  <span className="flex items-center gap-1 text-xs text-profit">
-                    <Bell className="w-3 h-3" /> Alerts ON
-                  </span>
-                ) : notifPermission === "denied" ? (
-                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <BellOff className="w-3 h-3" /> Alerts blocked
-                  </span>
+            {!autoStatus?.enabled ? (
+              <p className="text-xs text-muted-foreground">Enable to start scanning all assets for 100% confluence signals. Stakes your <strong className="text-foreground">full balance</strong> on every trade.</p>
+            ) : (
+              <>
+                {/* Status banner */}
+                {scanStatus?.verdict === "PERFECT" ? (
+                  <div className="flex items-center gap-2 mb-3 p-2.5 bg-profit/10 border border-profit/30 rounded-lg">
+                    <Zap className="w-4 h-4 text-profit shrink-0" />
+                    <div>
+                      <div className="text-xs font-black text-profit">PERFECT SIGNAL — TRADING NOW</div>
+                      <div className="text-[10px] text-profit/70">{scanStatus?.asset} · {scanStatus?.direction} · Full balance staked</div>
+                    </div>
+                  </div>
                 ) : (
-                  <button
-                    onClick={async () => {
-                      const granted = await requestPermission();
-                      setNotifPermission(granted ? "granted" : "denied");
-                    }}
-                    className="flex items-center gap-1 text-xs text-primary hover:underline"
-                  >
-                    <Bell className="w-3 h-3" /> Enable alerts
-                  </button>
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="w-1.5 h-1.5 bg-primary rounded-full live-pulse shrink-0" />
+                    <div className="text-xs text-muted-foreground">
+                      Hunting perfect signal on <span className="text-foreground font-semibold">{scanStatus?.asset ?? "—"}</span>
+                      <span className="ml-1 text-muted-foreground/60">· next scan in {scanStatus?.nextScanIn ?? 30}s</span>
+                    </div>
+                  </div>
                 )}
-              </div>
-            )}
 
-            {showSettings && (
-              <div className="space-y-3 mt-3 p-3 bg-card border border-border rounded-lg text-sm">
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Stake per trade (GHS)</label>
-                  <input
-                    type="number"
-                    value={autoSettings.stake}
-                    onChange={(e) => setAutoSettings((s) => ({ ...s, stake: Number(e.target.value) }))}
-                    className="w-full bg-background border border-border rounded px-2 py-1.5 text-sm focus:outline-none focus:border-primary"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Max trades/day</label>
-                  <input
-                    type="number"
-                    value={autoSettings.maxDaily}
-                    onChange={(e) => setAutoSettings((s) => ({ ...s, maxDaily: Number(e.target.value) }))}
-                    className="w-full bg-background border border-border rounded px-2 py-1.5 text-sm focus:outline-none focus:border-primary"
-                  />
-                </div>
-              </div>
-            )}
+                {/* Condition checklist */}
+                {scanStatus?.conditions?.length > 0 && (
+                  <div className="bg-card border border-border rounded-lg p-2.5 mb-3 space-y-1.5">
+                    <div className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                      <Radar className="w-3 h-3" /> Last Scan — {scanStatus.conditionsPassed}/8 conditions met
+                    </div>
+                    {scanStatus.conditions.map((c: any, i: number) => (
+                      <div key={i} className="flex items-start gap-2 text-xs">
+                        {c.passed
+                          ? <CheckCircle className="w-3 h-3 text-profit shrink-0 mt-0.5" />
+                          : <XCircle    className="w-3 h-3 text-loss/60 shrink-0 mt-0.5" />}
+                        <div className={c.passed ? "text-foreground" : "text-muted-foreground"}>
+                          <span className="font-semibold">{c.name}</span>
+                          <span className="text-[10px] ml-1 opacity-70">{c.detail}</span>
+                        </div>
+                      </div>
+                    ))}
+                    {/* Progress bar */}
+                    <div className="mt-2 h-1.5 bg-secondary rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${scanStatus.conditionsPassed === 8 ? "bg-profit" : scanStatus.conditionsPassed >= 5 ? "bg-yellow-400" : "bg-primary/50"}`}
+                        style={{ width: `${(scanStatus.conditionsPassed / 8) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
 
-            <div className="grid grid-cols-2 gap-2 text-xs mt-3">
-              <div className="bg-card border border-border rounded-lg p-2">
-                <div className="text-muted-foreground">Trades Today</div>
-                <div className="font-bold">{autoStatus?.tradesToday ?? 0} / {autoStatus?.maxDailyTrades ?? 10}</div>
-              </div>
-              <div className="bg-card border border-border rounded-lg p-2">
-                <div className="text-muted-foreground">Auto Stake</div>
-                <div className="font-bold text-primary">GHS {autoStatus?.stakeAmount?.toFixed(2) ?? "10.00"}</div>
-              </div>
-            </div>
+                {/* Stats row */}
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div className="bg-card border border-border rounded-lg p-2 text-center">
+                    <div className="text-muted-foreground text-[10px]">Trades</div>
+                    <div className="font-bold">{scanStatus?.tradesToday ?? 0}</div>
+                  </div>
+                  <div className="bg-card border border-border rounded-lg p-2 text-center">
+                    <div className="text-muted-foreground text-[10px]">Won</div>
+                    <div className="font-bold text-profit">{scanStatus?.totalWon ?? 0}</div>
+                  </div>
+                  <div className="bg-card border border-border rounded-lg p-2 text-center">
+                    <div className="text-muted-foreground text-[10px]">Stake</div>
+                    <div className="font-bold text-primary text-[10px]">Full Bal.</div>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Open Trades */}
