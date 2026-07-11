@@ -10,6 +10,10 @@ export const withdrawalsTable = pgTable("withdrawals", {
   momoNumber: text("momo_number").notNull(),
   momoProvider: text("momo_provider").notNull(), // MTN | VODAFONE | AIRTELTIGO
   status: text("status").notNull().default("PENDING"), // PENDING | PROCESSING | COMPLETED | FAILED
+  recipientCode: text("recipient_code"), // Paystack transfer recipient code
+  transferCode: text("transfer_code"),   // Paystack transfer code
+  reference: text("reference"),          // Our own transfer reference
+  failureReason: text("failure_reason"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   completedAt: timestamp("completed_at"),
 });
