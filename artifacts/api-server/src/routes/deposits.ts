@@ -50,7 +50,7 @@ router.post("/deposits", async (req, res) => {
   try {
     const body = CreateDepositBody.parse(req.body);
 
-    if (body.amount < 10)    return res.status(400).json({ error: "Minimum deposit is GHS 10" });
+    if (body.amount < 5)     return res.status(400).json({ error: "Minimum deposit is GHS 5" });
     if (body.amount > 50000) return res.status(400).json({ error: "Maximum deposit is GHS 50,000" });
 
     const reference = makeRef();

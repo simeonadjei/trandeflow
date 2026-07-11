@@ -68,7 +68,7 @@ export default function Wallet() {
 
   const amt     = parseFloat(amount) || 0;
   const balance = account?.balance ?? 0;
-  const canGo   = amt >= 10 && phone.length >= 10 && (tab === "deposit" || amt <= balance);
+  const canGo   = amt >= 5 && phone.length >= 10 && (tab === "deposit" || amt <= balance);
 
   function handleGo() {
     setError(null);
@@ -171,7 +171,7 @@ export default function Wallet() {
             </label>
             <input
               type="number"
-              min={10}
+              min={5}
               value={amount}
               onChange={e => setAmount(e.target.value)}
               placeholder="e.g. 100"
