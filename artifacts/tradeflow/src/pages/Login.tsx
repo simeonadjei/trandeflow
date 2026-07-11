@@ -25,7 +25,7 @@ export default function Login() {
       const data = await res.json();
       if (!res.ok) { setError(data.error || "Login failed"); return; }
       login(data.token, data.user);
-      navigate(data.user.role === "admin" ? "/admin" : "/trade");
+      navigate("/trade");
     } catch {
       setError("Network error. Please try again.");
     } finally {
@@ -43,11 +43,6 @@ export default function Login() {
             <span>Trade<span className="text-primary">Flow</span></span>
           </Link>
           <p className="text-muted-foreground text-sm mt-1">Sign in to your account</p>
-        </div>
-
-        {/* Admin hint */}
-        <div className="mb-4 p-3 bg-primary/10 border border-primary/20 rounded-lg text-xs text-muted-foreground text-center">
-          Admin: <span className="font-mono text-primary">admin@tradeflow.gh</span> / <span className="font-mono text-primary">Admin@2024</span>
         </div>
 
         <form onSubmit={handleSubmit} className="bg-card border border-border rounded-2xl p-6 space-y-4">

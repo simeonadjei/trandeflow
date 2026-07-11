@@ -1,11 +1,10 @@
-import { Switch, Route, Router as WouterRouter } from "wouter";
+import { Switch, Route, Router as WouterRouter, useLocation, Redirect } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { DemoModeProvider } from "@/lib/DemoModeContext";
-import { AuthProvider } from "@/lib/AuthContext";
+import { AuthProvider, useAuth } from "@/lib/AuthContext";
 import NotFound from "@/pages/not-found";
-import Landing from "@/pages/Landing";
 import Trade from "@/pages/Trade";
 import Wallet from "@/pages/Wallet";
 import Learn from "@/pages/Learn";
@@ -20,17 +19,28 @@ const queryClient = new QueryClient({
   },
 });
 
+/** Redirects unauthenticated users to /login. */
+function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
+  const { isAuthenticated } = useAuth();
+  if (!isAuthenticated) return <Redirect to="/login" />;
+  return <Component />;
+}
+
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={Landing} />
-      <Route path="/trade" component={Trade} />
-      <Route path="/wallet" component={Wallet} />
-      <Route path="/learn" component={Learn} />
+      {/* Public auth routes */}
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
       <Route path="/forgot-password" component={ForgotPassword} />
-      <Route path="/admin" component={Admin} />
+
+      {/* All app routes require login */}
+      <Route path="/" component={() => <ProtectedRoute component={Trade} />} />
+      <Route path="/trade" component={() => <ProtectedRoute component={Trade} />} />
+      <Route path="/wallet" component={() => <ProtectedRoute component={Wallet} />} />
+      <Route path="/learn" component={() => <ProtectedRoute component={Learn} />} />
+      <Route path="/admin" component={() => <ProtectedRoute component={Admin} />} />
+
       <Route component={NotFound} />
     </Switch>
   );

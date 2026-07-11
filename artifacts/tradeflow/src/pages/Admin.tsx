@@ -105,8 +105,8 @@ export default function Admin() {
   const selectTab = (t: Tab) => { setTab(t); setDrawerOpen(false); };
 
   const revenueChartData = [
-    { name: "Win Cut 15%", value: stats?.revenueFromWinCut ?? 0, color: "#f59e0b" },
-    { name: "Loss Revenue", value: stats?.revenueFromLosses ?? 0, color: "#22c55e" },
+    { name: "Wins", value: stats?.revenueFromWinCut ?? 0, color: "#22c55e" },
+    { name: "Losses", value: stats?.revenueFromLosses ?? 0, color: "#ef4444" },
   ];
   const winTrades = trades.filter(t => t.status === "WIN" && !t.isDemo).length;
   const lossTrades = trades.filter(t => t.status === "LOSS" && !t.isDemo).length;
@@ -279,25 +279,13 @@ export default function Admin() {
 
                     {/* Revenue highlight */}
                     <div className="bg-gradient-to-r from-primary/20 to-primary/5 border border-primary/30 rounded-2xl p-4 md:p-6">
-                      <div className="flex items-center gap-3 mb-4">
+                      <div className="flex items-center gap-3">
                         <div className="w-9 h-9 bg-primary/20 rounded-xl flex items-center justify-center shrink-0">
                           <DollarSign className="w-4 h-4 text-primary" />
                         </div>
                         <div>
-                          <div className="text-xs text-muted-foreground">Total Platform Revenue</div>
+                          <div className="text-xs text-muted-foreground">Total Net Profit</div>
                           <div className="text-2xl md:text-3xl font-black text-primary">GHS {stats.platformRevenue.toFixed(2)}</div>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="bg-background/40 rounded-xl p-3">
-                          <div className="text-xs text-muted-foreground mb-1">Win Cut (15%)</div>
-                          <div className="font-black text-yellow-400">GHS {stats.revenueFromWinCut.toFixed(2)}</div>
-                          <div className="text-xs text-muted-foreground mt-0.5">On user wins</div>
-                        </div>
-                        <div className="bg-background/40 rounded-xl p-3">
-                          <div className="text-xs text-muted-foreground mb-1">From Losses</div>
-                          <div className="font-black text-profit">GHS {stats.revenueFromLosses.toFixed(2)}</div>
-                          <div className="text-xs text-muted-foreground mt-0.5">Kept stakes</div>
                         </div>
                       </div>
                     </div>
@@ -430,50 +418,17 @@ export default function Admin() {
                 {/* ── EARNINGS ── */}
                 {tab === "earnings" && (
                   <div>
-                    <h1 className="text-lg font-black mb-1 flex items-center gap-2"><DollarSign className="w-5 h-5 text-primary" /> Platform Earnings</h1>
-                    <p className="text-xs text-muted-foreground mb-4">15% cut on wins · 100% of lost stakes kept</p>
+                    <h1 className="text-lg font-black mb-1 flex items-center gap-2"><DollarSign className="w-5 h-5 text-primary" /> Trade Earnings</h1>
+                    <p className="text-xs text-muted-foreground mb-4">Net profit and loss from all real trades</p>
 
-                    <div className="grid grid-cols-3 gap-3 mb-5">
+                    <div className="grid grid-cols-2 gap-3 mb-5">
                       <div className="bg-gradient-to-br from-primary/20 to-transparent border border-primary/30 rounded-xl p-3 text-center">
-                        <div className="text-xs text-muted-foreground mb-1">Total</div>
+                        <div className="text-xs text-muted-foreground mb-1">Net Profit</div>
                         <div className="text-lg font-black text-primary">GHS {(stats?.platformRevenue ?? 0).toFixed(2)}</div>
                       </div>
                       <div className="bg-card border border-border rounded-xl p-3 text-center">
-                        <div className="text-xs text-muted-foreground mb-1">Win Cut</div>
-                        <div className="text-lg font-black text-yellow-400">GHS {(stats?.revenueFromWinCut ?? 0).toFixed(2)}</div>
-                      </div>
-                      <div className="bg-card border border-border rounded-xl p-3 text-center">
-                        <div className="text-xs text-muted-foreground mb-1">Losses</div>
-                        <div className="text-lg font-black text-profit">GHS {(stats?.revenueFromLosses ?? 0).toFixed(2)}</div>
-                      </div>
-                    </div>
-
-                    <div className="bg-card border border-border rounded-xl overflow-hidden">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm min-w-[420px]">
-                          <thead className="border-b border-border bg-secondary/30">
-                            <tr>{["#", "Trade", "Symbol", "Type", "Amount", "Date"].map(h => (
-                              <th key={h} className="text-left px-3 py-3 text-xs text-muted-foreground font-semibold">{h}</th>
-                            ))}</tr>
-                          </thead>
-                          <tbody>
-                            {earnings.map(e => (
-                              <tr key={e.id} className="border-b border-border last:border-0 hover:bg-secondary/20">
-                                <td className="px-3 py-2.5 text-xs text-muted-foreground">{e.id}</td>
-                                <td className="px-3 py-2.5 text-xs text-muted-foreground">{e.tradeId ? `#${e.tradeId}` : "—"}</td>
-                                <td className="px-3 py-2.5 font-semibold text-xs">{e.symbol || "—"}</td>
-                                <td className="px-3 py-2.5">
-                                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${e.type === "WIN_CUT" ? "bg-yellow-400/15 border-yellow-400/30 text-yellow-400" : "bg-profit/15 border-profit/30 text-profit"}`}>
-                                    {e.type === "WIN_CUT" ? "Win 15%" : "Loss"}
-                                  </span>
-                                </td>
-                                <td className="px-3 py-2.5 font-bold text-profit text-xs">+GHS {e.amount.toFixed(2)}</td>
-                                <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{new Date(e.createdAt).toLocaleDateString("en-GH")}</td>
-                              </tr>
-                            ))}
-                            {earnings.length === 0 && <tr><td colSpan={6} className="text-center py-10 text-muted-foreground text-sm">No earnings yet — trades will generate revenue as they close.</td></tr>}
-                          </tbody>
-                        </table>
+                        <div className="text-xs text-muted-foreground mb-1">Total Trades</div>
+                        <div className="text-lg font-black text-yellow-400">{stats?.totalTrades ?? 0}</div>
                       </div>
                     </div>
                   </div>

@@ -9,7 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNotifications } from "../lib/useNotifications";
 import { useDemoMode } from "../lib/DemoModeContext";
 import { useAuth } from "../lib/AuthContext";
-import { TrendingUp, TrendingDown, ChevronDown, Clock, CheckCircle, XCircle, FlaskConical, Zap, StopCircle, Activity, ArrowUpToLine, ArrowDownToLine } from "lucide-react";
+import { TrendingUp, TrendingDown, ChevronDown, Clock, CheckCircle, XCircle, FlaskConical, Zap, StopCircle, Activity, ArrowUpToLine, ArrowDownToLine, ShieldCheck, ChevronUp } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart, Bar, Line
 } from "recharts";
@@ -127,9 +127,11 @@ export default function Trade() {
   const [showAssets, setShowAssets] = useState(false);
   const [session, setSession] = useState<any>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
+  const [adminStats, setAdminStats] = useState<any>(null);
+  const [adminPanelOpen, setAdminPanelOpen] = useState(true);
 
   const { isDemo, toggleDemo } = useDemoMode();
-  const { user, logout } = useAuth();
+  const { user, logout, token, isAdmin } = useAuth();
   const queryClient = useQueryClient();
   const { notify, requestPermission } = useNotifications();
   // Request notification permission once on mount (silently)
@@ -173,6 +175,19 @@ export default function Trade() {
     const iv = setInterval(poll, 1000);
     return () => clearInterval(iv);
   }, [notify]);
+
+  // Fetch admin stats every 15s when logged in as admin
+  useEffect(() => {
+    if (!isAdmin || !token) return;
+    const fetchStats = () =>
+      fetch("/api/admin/stats", { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d) setAdminStats(d); })
+        .catch(() => {});
+    fetchStats();
+    const iv = setInterval(fetchStats, 15_000);
+    return () => clearInterval(iv);
+  }, [isAdmin, token]);
 
   const handleStartSession = async () => {
     setSessionLoading(true);
@@ -287,9 +302,56 @@ export default function Trade() {
         </div>
       </div>
 
+      {/* Admin stats panel — shown below top bar when logged in as admin */}
+      {isAdmin && (
+        <div className="fixed top-14 left-0 right-0 z-40 border-b border-primary/20 bg-primary/5 backdrop-blur-sm">
+          <div className="flex items-center gap-3 px-4 py-2 overflow-x-auto scrollbar-none">
+            <div className="flex items-center gap-1.5 text-primary text-xs font-bold shrink-0">
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>ADMIN</span>
+            </div>
+            <div className="w-px h-4 bg-border shrink-0" />
+            {adminStats ? (
+              <>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-[10px] text-muted-foreground">Balance</span>
+                  <span className="text-xs font-bold text-primary">GHS {(account?.balance ?? 0).toFixed(2)}</span>
+                </div>
+                <div className="w-px h-4 bg-border shrink-0" />
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-[10px] text-muted-foreground">Trades</span>
+                  <span className="text-xs font-bold">{adminStats.totalTrades}</span>
+                  <span className="text-[10px] text-yellow-400">{adminStats.openTrades} open</span>
+                </div>
+                <div className="w-px h-4 bg-border shrink-0" />
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-[10px] text-muted-foreground">Deposited</span>
+                  <span className="text-xs font-bold text-profit">GHS {adminStats.totalDeposited.toFixed(2)}</span>
+                </div>
+                <div className="w-px h-4 bg-border shrink-0" />
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-[10px] text-muted-foreground">Withdrawn</span>
+                  <span className="text-xs font-bold text-loss">GHS {adminStats.totalWithdrawn.toFixed(2)}</span>
+                </div>
+                <div className="w-px h-4 bg-border shrink-0" />
+                <Link href="/admin" className="text-[10px] font-bold text-primary border border-primary/30 rounded px-2 py-0.5 hover:bg-primary/20 transition-colors shrink-0">
+                  Full Admin →
+                </Link>
+              </>
+            ) : (
+              <span className="text-[10px] text-muted-foreground">Loading stats…</span>
+            )}
+            <div className="flex-1" />
+            <button onClick={() => setAdminPanelOpen(o => !o)} className="text-muted-foreground hover:text-foreground shrink-0">
+              <ChevronUp className={`w-3.5 h-3.5 transition-transform ${adminPanelOpen ? "" : "rotate-180"}`} />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Demo mode banner */}
       {isDemo && (
-        <div className="fixed top-14 left-0 right-0 z-40 bg-purple-500/15 border-b border-purple-500/30 px-4 py-2 flex items-center justify-between">
+        <div className={`fixed ${isAdmin ? "top-[88px]" : "top-14"} left-0 right-0 z-39 bg-purple-500/15 border-b border-purple-500/30 px-4 py-2 flex items-center justify-between`}>
           <div className="flex items-center gap-2 text-xs text-purple-300">
             <FlaskConical className="w-3.5 h-3.5" />
             <span className="font-semibold">DEMO MODE</span>
@@ -304,7 +366,8 @@ export default function Trade() {
         </div>
       )}
 
-      <div className={`${isDemo ? "pt-[92px]" : "pt-14"} grid grid-cols-1 lg:grid-cols-3 min-h-screen`}>
+      {/* Calculate top padding based on active banners */}
+      <div className={`${isAdmin && isDemo ? "pt-[128px]" : isAdmin || isDemo ? "pt-[92px]" : "pt-14"} grid grid-cols-1 lg:grid-cols-3 min-h-screen`}>
         {/* Left — Chart + Pattern */}
         <div className="lg:col-span-2 border-r border-border flex flex-col">
           {/* Asset selector */}
