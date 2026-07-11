@@ -1,5 +1,5 @@
 import { db } from "@workspace/db";
-import { accountsTable, tradesTable, platformRevenueTable } from "@workspace/db";
+import { accountsTable, tradesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { logger } from "./logger";
 
@@ -281,7 +281,7 @@ async function runSniperCycle() {
     const signal     = bestAnalysis.signal;
     const stake      = balance; // 100% of account balance
     const entryPrice = livePrice(bestAsset.price);
-    const payout     = 85;
+    const payout     = 100; // user keeps 100% of profit on win
     const duration   = 60; // always 1 minute
 
     logger.info({ asset: bestAsset.symbol, signal, stake, conditionsPassed }, "Sniper: PERFECT SIGNAL — placing trade with full balance");
@@ -334,16 +334,7 @@ async function runSniperCycle() {
             totalProfit:  newProfit.toFixed(2),
           }).where(eq(accountsTable.id, 1));
 
-          // Platform revenue (real trades only)
-          const revenueAmount = won ? stake * 0.15 : stake;
-          await db.insert(platformRevenueTable).values({
-            tradeId: trade.id,
-            amount:  revenueAmount.toFixed(2),
-            type:    won ? "WIN_CUT" : "LOSS_KEEP",
-            symbol:  bestAsset.symbol,
-          });
-
-          if (won) _totalWon++;
+            if (won) _totalWon++;
         }
 
         logger.info({ symbol: bestAsset.symbol, status, profit: profit.toFixed(2) }, "Sniper: trade closed");

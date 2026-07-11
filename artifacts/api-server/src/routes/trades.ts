@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { tradesTable, accountsTable, platformRevenueTable } from "@workspace/db";
+import { tradesTable, accountsTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { PlaceTradeBody, ToggleAutoInvestBody } from "@workspace/api-zod";
 
@@ -59,7 +59,7 @@ router.post("/trades", async (req, res) => {
     const body = PlaceTradeBody.parse(req.body);
     const isDemo = body.isDemo ?? false;
     const entryPrice = getPrice(body.symbol);
-    const payout = 85;
+    const payout = 100;
     const duration = body.duration ?? 60;
 
     // Check balance
@@ -128,16 +128,6 @@ router.post("/trades", async (req, res) => {
               })
               .where(eq(accountsTable.id, 1));
 
-            // Record platform revenue (real trades only)
-            const stake = parseFloat(body.amount.toString());
-            const revenueAmount = won ? stake * 0.15 : stake;
-            const revenueType = won ? "WIN_CUT" : "LOSS_KEEP";
-            await db.insert(platformRevenueTable).values({
-              tradeId: trade.id,
-              amount: revenueAmount.toFixed(2),
-              type: revenueType,
-              symbol: body.symbol,
-            });
           }
         }
       } catch (_e) {

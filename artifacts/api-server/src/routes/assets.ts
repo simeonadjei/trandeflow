@@ -3,14 +3,14 @@ import { Router } from "express";
 const router = Router();
 
 const ASSETS = [
-  { symbol: "EURUSD", name: "EUR/USD", price: 1.08542, change: 0.00123, changePercent: 0.11, payout: 87, trending: true },
-  { symbol: "BTCUSD", name: "BTC/USD", price: 67340.50, change: -1240.30, changePercent: -1.81, payout: 82, trending: true },
-  { symbol: "GBPUSD", name: "GBP/USD", price: 1.27180, change: 0.00345, changePercent: 0.27, payout: 85, trending: false },
-  { symbol: "ETHUSD", name: "ETH/USD", price: 3412.80, change: 87.40, changePercent: 2.63, payout: 80, trending: true },
-  { symbol: "XAUUSD", name: "Gold/USD", price: 2318.40, change: 12.30, changePercent: 0.53, payout: 84, trending: false },
-  { symbol: "USDJPY", name: "USD/JPY", price: 156.720, change: -0.340, changePercent: -0.22, payout: 86, trending: false },
-  { symbol: "AAPL", name: "Apple Inc.", price: 189.50, change: 2.30, changePercent: 1.23, payout: 78, trending: false },
-  { symbol: "TSLA", name: "Tesla Inc.", price: 174.80, change: -3.20, changePercent: -1.80, payout: 80, trending: true },
+  { symbol: "EURUSD", name: "EUR/USD", price: 1.08542, change: 0.00123, changePercent: 0.11, payout: 100, trending: true },
+  { symbol: "BTCUSD", name: "BTC/USD", price: 67340.50, change: -1240.30, changePercent: -1.81, payout: 100, trending: true },
+  { symbol: "GBPUSD", name: "GBP/USD", price: 1.27180, change: 0.00345, changePercent: 0.27, payout: 100, trending: false },
+  { symbol: "ETHUSD", name: "ETH/USD", price: 3412.80, change: 87.40, changePercent: 2.63, payout: 100, trending: true },
+  { symbol: "XAUUSD", name: "Gold/USD", price: 2318.40, change: 12.30, changePercent: 0.53, payout: 100, trending: false },
+  { symbol: "USDJPY", name: "USD/JPY", price: 156.720, change: -0.340, changePercent: -0.22, payout: 100, trending: false },
+  { symbol: "AAPL", name: "Apple Inc.", price: 189.50, change: 2.30, changePercent: 1.23, payout: 100, trending: false },
+  { symbol: "TSLA", name: "Tesla Inc.", price: 174.80, change: -3.20, changePercent: -1.80, payout: 100, trending: true },
 ];
 
 function generateCandles(basePrice: number, count = 60) {
