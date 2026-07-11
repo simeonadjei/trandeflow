@@ -61,7 +61,7 @@ router.get("/account/stats", async (req, res) => {
 router.post("/session/start", async (req, res) => {
   try {
     const stake = parseFloat(req.body?.stake) || 50;
-    if (stake < 1) return res.status(400).json({ error: "Stake must be at least GHS 1" });
+    if (stake < 5) return res.status(400).json({ error: "Stake must be at least GHS 5" });
     await startSession(stake);
     res.json({ ok: true, status: getSessionStatus() });
   } catch (err) {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
 import {
   useListAssets, useGetCandles, useAnalyzePattern, useListTrades,
@@ -130,16 +130,48 @@ export default function Trade() {
   const { isDemo, toggleDemo } = useDemoMode();
   const { user, logout } = useAuth();
   const queryClient = useQueryClient();
-  const { notify } = useNotifications();
-
-  // Poll session status every second
+  const { notify, requestPermission } = useNotifications();
+  // Request notification permission once on mount (silently)
   useEffect(() => {
-    const poll = () =>
-      fetch("/api/session/status").then(r => r.json()).then(setSession).catch(() => {});
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      requestPermission();
+    }
+  }, []);
+
+  // Poll session status every second; fire notification when a trade closes
+  const prevSessionRef = useRef<any>(null);
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const data = await fetch("/api/session/status").then(r => r.json());
+        // Detect a newly closed trade by lastResult changing
+        const prev = prevSessionRef.current;
+        if (
+          prev &&
+          data.sessionTrades > prev.sessionTrades &&
+          data.lastResult
+        ) {
+          const won = data.lastResult === "WIN";
+          const profit = Math.abs(data.lastProfit ?? 0).toFixed(2);
+          notify(
+            won ? "✅ Trade WON!" : "❌ Trade LOST",
+            {
+              body: won
+                ? `+GHS ${profit} on ${data.asset} ${data.direction}`
+                : `-GHS ${profit} on ${data.asset} ${data.direction}`,
+              icon: "/favicon.ico",
+              tag: "trade-result",
+            }
+          );
+        }
+        prevSessionRef.current = data;
+        setSession(data);
+      } catch { /* ignore */ }
+    };
     poll();
     const iv = setInterval(poll, 1000);
     return () => clearInterval(iv);
-  }, []);
+  }, [notify]);
 
   const handleStartSession = async () => {
     setSessionLoading(true);
@@ -190,9 +222,6 @@ export default function Trade() {
   const modeTrades = trades?.filter((t) => (isDemo ? t.isDemo : !t.isDemo)) ?? [];
   const openTrades = modeTrades.filter((t) => t.status === "OPEN");
   const closedTrades = modeTrades.filter((t) => t.status !== "OPEN").slice(0, 15);
-
-  // unused suppressor
-  void notify;
 
   const handleTrade = (direction: "UP" | "DOWN") => {
     placeTrade.mutate({ data: { symbol: selectedSymbol, direction, amount, duration: 60, isDemo } });
@@ -432,13 +461,13 @@ export default function Trade() {
               <label className="text-xs text-muted-foreground font-medium mb-1.5 block">Stake Amount (GHS)</label>
               <input
                 type="number"
-                min={1}
+                min={5}
                 value={amount}
                 onChange={(e) => setAmount(Number(e.target.value))}
                 className="w-full bg-card border border-border rounded-lg px-3 py-2 text-sm font-mono font-semibold focus:outline-none focus:border-primary transition-colors"
               />
               <div className="flex gap-1.5 mt-2">
-                {[10, 25, 50, 100].map((v) => (
+                {[5, 10, 50, 100].map((v) => (
                   <button
                     key={v}
                     onClick={() => setAmount(v)}
