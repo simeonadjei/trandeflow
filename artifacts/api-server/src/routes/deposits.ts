@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { depositsTable, accountsTable } from "@workspace/db";
+import { depositsTable, accountsTable, usersTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { CreateDepositBody } from "@workspace/api-zod";
 
@@ -57,6 +57,10 @@ router.post("/deposits", async (req, res) => {
     const amountKobo = Math.round(body.amount * 100); // Paystack uses pesewas (smallest unit)
     const providerCode = PROVIDER_CODE[body.momoProvider] ?? "MTN";
 
+    // Look up the account owner's real email for Paystack
+    const owner = await db.query.usersTable.findFirst({ where: eq(usersTable.accountId, 1) });
+    const chargeEmail = owner?.email ?? process.env.PAYSTACK_EMAIL ?? "payments@tradeflow.gh";
+
     // Initiate Paystack Mobile Money charge
     const paystackRes = await fetch("https://api.paystack.co/charge", {
       method: "POST",
@@ -65,7 +69,7 @@ router.post("/deposits", async (req, res) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        email:          "tradeflow@tradeflow.gh",
+        email:          chargeEmail,
         amount:         amountKobo,
         currency:       "GHS",
         mobile_money: {

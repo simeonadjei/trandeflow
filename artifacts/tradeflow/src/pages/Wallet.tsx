@@ -23,7 +23,10 @@ function StatusBadge({ status }: { status: string }) {
 
 export default function Wallet() {
   const { user, logout } = useAuth();
-  const [tab, setTab]           = useState<"deposit" | "withdraw">("deposit");
+  const [tab, setTab] = useState<"deposit" | "withdraw">(() => {
+    const p = new URLSearchParams(window.location.search).get("tab");
+    return p === "withdraw" ? "withdraw" : "deposit";
+  });
   const [amount, setAmount]     = useState("");
   const [phone, setPhone]       = useState("");
   const [provider, setProvider] = useState("MTN");

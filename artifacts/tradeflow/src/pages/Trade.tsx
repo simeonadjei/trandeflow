@@ -9,7 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNotifications } from "../lib/useNotifications";
 import { useDemoMode } from "../lib/DemoModeContext";
 import { useAuth } from "../lib/AuthContext";
-import { TrendingUp, TrendingDown, ChevronDown, Clock, CheckCircle, XCircle, FlaskConical, Zap, StopCircle, Activity } from "lucide-react";
+import { TrendingUp, TrendingDown, ChevronDown, Clock, CheckCircle, XCircle, FlaskConical, Zap, StopCircle, Activity, ArrowUpToLine, ArrowDownToLine } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart, Bar, Line
 } from "recharts";
@@ -267,7 +267,12 @@ export default function Trade() {
             </div>
           </div>
 
-          <Link href="/wallet" className="px-3 py-1 bg-secondary rounded-md text-xs font-medium hover:bg-secondary/80 transition-colors">Wallet</Link>
+          <Link href="/wallet?tab=deposit" className="px-3 py-1 bg-profit/20 border border-profit/40 text-profit text-xs font-bold rounded-md hover:bg-profit/30 transition-colors flex items-center gap-1">
+            <ArrowUpToLine className="w-3 h-3" /> Deposit
+          </Link>
+          <Link href="/wallet?tab=withdraw" className="px-3 py-1 bg-primary/20 border border-primary/40 text-primary text-xs font-bold rounded-md hover:bg-primary/30 transition-colors flex items-center gap-1">
+            <ArrowDownToLine className="w-3 h-3" /> Withdraw
+          </Link>
           <Link href="/" className="px-3 py-1 bg-secondary rounded-md text-xs font-medium hover:bg-secondary/80 transition-colors">Home</Link>
           {user ? (
             <div className="flex items-center gap-2">

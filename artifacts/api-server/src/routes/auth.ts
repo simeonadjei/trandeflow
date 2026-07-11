@@ -8,22 +8,6 @@ import crypto from "crypto";
 
 const router = Router();
 
-// Seed admin on first load
-async function ensureAdmin() {
-  const existing = await db.query.usersTable.findFirst({
-    where: eq(usersTable.email, "admin@tradeflow.gh"),
-  });
-  if (!existing) {
-    const hash = await bcrypt.hash("Admin@2024", 10);
-    await db.insert(usersTable).values({
-      name: "Admin",
-      email: "admin@tradeflow.gh",
-      passwordHash: hash,
-      role: "admin",
-    });
-  }
-}
-ensureAdmin().catch(() => {});
 
 router.post("/auth/register", async (req, res) => {
   try {
