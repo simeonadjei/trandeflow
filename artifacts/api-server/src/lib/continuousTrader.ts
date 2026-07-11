@@ -18,6 +18,7 @@ import { getLivePrice, getBasePrice } from "./prices";
 export interface SessionStatus {
   active:          boolean;
   stake:           number;
+  tradePercent:    number;   // % of balance used as stake each trade
   phase:           "idle" | "analyzing" | "pre-trade" | "trading" | "waiting";
   asset:           string;
   direction:       "UP" | "DOWN" | null;
@@ -35,7 +36,7 @@ export interface SessionStatus {
 }
 
 let _s: SessionStatus = {
-  active: false, stake: 50, phase: "idle",
+  active: false, stake: 0, tradePercent: 50, phase: "idle",
   asset: "—", direction: null,
   upScore: 0, downScore: 0,
   winConfidence: 0, preTradeIn: 0,
@@ -168,8 +169,9 @@ async function loop() {
       return;
     }
 
-    const stake = parseFloat(account.autoInvestStake as string ?? "50");
-    _s.stake = stake;
+    // Read trade percentage — actual stake computed fresh just before each trade
+    const tradePercent = Math.min(100, Math.max(1, parseFloat((account.tradePercentage as string) ?? "50")));
+    _s.tradePercent = tradePercent;
 
     // ── Phase: Analyse ──────────────────────────────────────────────────
     _s.phase   = "analyzing";
@@ -213,14 +215,20 @@ async function loop() {
     }
 
     // ── Phase: Trade ────────────────────────────────────────────────────
+    // Re-fetch balance just before placing so stake reflects latest balance (post-prior wins)
     const freshAccount = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
-    const balance = parseFloat(freshAccount?.balance as string ?? "0");
-    if (balance < 5) {
+    const freshBalance = parseFloat(freshAccount?.balance as string ?? "0");
+    const freshStake   = Math.max(1, parseFloat((freshBalance * tradePercent / 100).toFixed(2)));
+    if (freshBalance < 1) {
       _s.phase   = "waiting";
       _s.message = "Balance too low — please deposit funds";
       await sleep(30_000);
       continue;
     }
+
+    // Use freshStake — balance at moment of trade so profit compounds
+    const stake = freshStake;
+    _s.stake = freshStake;
 
     const entryPrice = getLivePrice(best.asset);
     const duration   = 60;
@@ -230,7 +238,7 @@ async function loop() {
     _s.preTradeIn    = 0;
     _s.message       = `Trading ${best.direction} on ${best.asset} — ${confidence}% win confidence`;
 
-    logger.info({ asset: best.asset, dir: best.direction, score: best.score, stake }, "CT: placing trade");
+    logger.info({ asset: best.asset, dir: best.direction, score: best.score, stake, tradePercent }, "CT: placing trade");
 
     let tradeId: number | null = null;
     try {
@@ -321,16 +329,17 @@ async function loop() {
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────
-export async function startSession(stake: number) {
+export async function startSession(tradePercentage: number) {
   await db.update(accountsTable).set({
     autoInvestEnabled: true,
-    autoInvestStake:   stake.toString(),
+    tradePercentage:   tradePercentage.toFixed(2),
   }).where(eq(accountsTable.id, 1));
 
   _s = {
     ..._s,
     active:        true,
-    stake,
+    tradePercent:  tradePercentage,
+    stake:         0,   // computed fresh each cycle from live balance
     phase:         "analyzing",
     sessionTrades: 0,
     sessionWins:   0,
@@ -357,11 +366,11 @@ export async function stopSession() {
 export async function initContinuousTrader() {
   const account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
   if (account?.autoInvestEnabled) {
-    const stake = parseFloat(account.autoInvestStake as string ?? "50");
-    logger.info({ stake }, "CT: auto-resuming active session from DB");
-    _s.active = true;
-    _s.stake  = stake;
-    _loopRunning = true;
+    const tradePercent = parseFloat((account.tradePercentage as string) ?? "50");
+    logger.info({ tradePercent }, "CT: auto-resuming active session from DB");
+    _s.active       = true;
+    _s.tradePercent = tradePercent;
+    _loopRunning    = true;
     loop().catch(e => { logger.error(e, "CT: loop crashed"); _loopRunning = false; });
   } else {
     logger.info("CT: no active session, standing by");

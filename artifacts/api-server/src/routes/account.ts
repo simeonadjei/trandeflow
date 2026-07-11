@@ -60,9 +60,9 @@ router.get("/account/stats", async (req, res) => {
 // ── Continuous trading session ────────────────────────────────────────────
 router.post("/session/start", async (req, res) => {
   try {
-    const stake = parseFloat(req.body?.stake) || 50;
-    if (stake < 5) return res.status(400).json({ error: "Stake must be at least GHS 5" });
-    await startSession(stake);
+    const pct = parseFloat(req.body?.tradePercent) || 50;
+    const tradePercent = Math.min(100, Math.max(1, pct));
+    await startSession(tradePercent);
     res.json({ ok: true, status: getSessionStatus() });
   } catch (err) {
     req.log.error(err);

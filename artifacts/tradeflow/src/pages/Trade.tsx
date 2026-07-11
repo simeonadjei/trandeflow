@@ -123,6 +123,7 @@ function TradeTimer({ closedAt, duration, createdAt }: { closedAt: string | null
 export default function Trade() {
   const [selectedSymbol, setSelectedSymbol] = useState("EURUSD");
   const [amount, setAmount] = useState(50);
+  const [tradePercent, setTradePercent] = useState(50);
   const [showAssets, setShowAssets] = useState(false);
   const [session, setSession] = useState<any>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
@@ -179,7 +180,7 @@ export default function Trade() {
       const res = await fetch("/api/session/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stake: amount }),
+        body: JSON.stringify({ tradePercent }),
       });
       const data = await res.json();
       setSession(data.status);
@@ -463,12 +464,48 @@ export default function Trade() {
               )}
             </h3>
 
-            {/* Amount */}
+            {/* Bot stake % selector */}
             <div className="mb-4">
-              <label className="text-xs text-muted-foreground font-medium mb-1.5 block">Stake Amount (GHS)</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs text-muted-foreground font-medium">Trade with (% of balance)</label>
+                <span className="text-xs font-mono font-bold text-primary">{tradePercent}%</span>
+              </div>
+              {/* Quick % presets */}
+              <div className="flex gap-1.5 mb-2">
+                {[10, 25, 50, 75, 100].map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => setTradePercent(v)}
+                    className={`flex-1 py-1.5 text-xs rounded-lg font-bold transition-colors ${tradePercent === v ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground hover:bg-secondary/80"}`}
+                  >
+                    {v}%
+                  </button>
+                ))}
+              </div>
+              {/* Slider */}
+              <input
+                type="range"
+                min={1}
+                max={100}
+                value={tradePercent}
+                onChange={(e) => setTradePercent(Number(e.target.value))}
+                className="w-full accent-primary cursor-pointer"
+              />
+              {/* GHS preview */}
+              <div className="flex justify-between text-[11px] mt-1.5">
+                <span className="text-muted-foreground">Stake per trade:</span>
+                <span className="font-mono font-semibold text-foreground">
+                  GHS {((displayBalance * tradePercent) / 100).toFixed(2)}
+                </span>
+              </div>
+            </div>
+
+            {/* Manual stake amount (for manual UP/DOWN buttons) */}
+            <div className="mb-4">
+              <label className="text-xs text-muted-foreground font-medium mb-1.5 block">Manual Stake (GHS)</label>
               <input
                 type="number"
-                min={5}
+                min={1}
                 value={amount}
                 onChange={(e) => setAmount(Number(e.target.value))}
                 className="w-full bg-card border border-border rounded-lg px-3 py-2 text-sm font-mono font-semibold focus:outline-none focus:border-primary transition-colors"

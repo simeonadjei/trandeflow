@@ -10,6 +10,7 @@ export const accountsTable = pgTable("accounts", {
   currency: text("currency").notNull().default("GHS"),
   autoInvestEnabled: boolean("auto_invest_enabled").notNull().default(false),
   autoInvestStake: numeric("auto_invest_stake", { precision: 18, scale: 2 }).notNull().default("10.00"),
+  tradePercentage: numeric("trade_percentage", { precision: 5, scale: 2 }).notNull().default("50.00"),
   autoInvestMaxDaily: integer("auto_invest_max_daily").notNull().default(10),
   autoInvestTradesToday: integer("auto_invest_trades_today").notNull().default(0),
   totalProfit: numeric("total_profit", { precision: 18, scale: 2 }).notNull().default("0.00"),
