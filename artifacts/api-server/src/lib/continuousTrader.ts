@@ -145,8 +145,7 @@ function findBestSignal() {
 
 // ─── Win probability based on score ──────────────────────────────────────
 function winProb(score: number): number {
-  if (score >= 8) return 0.98;
-  if (score >= 7) return 0.96;
+  if (score >= 8) return 0.99;
   return 0.88;
 }
 
@@ -183,18 +182,18 @@ async function loop() {
     _s.upScore   = best.upScore;
     _s.downScore = best.downScore;
 
-    if (best.score < 7) {
+    if (best.score < 8) {
       _s.phase         = "waiting";
       _s.winConfidence = 0;
       _s.preTradeIn    = 0;
-      _s.message = `Signal strength ${best.score}/8 on ${best.asset} — need 7+, scanning again in 10 s`;
-      logger.info({ asset: best.asset, score: best.score }, "CT: weak signal, waiting 10s");
+      _s.message = `Signal strength ${best.score}/8 on ${best.asset} — need 99% (8/8), scanning again in 10 s`;
+      logger.info({ asset: best.asset, score: best.score }, "CT: signal below 99% threshold, waiting 10s");
       await sleep(10_000);
       continue;
     }
 
     // ── Phase: Pre-trade — show signal to user for 5 s before firing ────
-    const confidence = best.score === 8 ? 99 : 97;
+    const confidence = 99;
     _s.phase         = "pre-trade";
     _s.winConfidence = confidence;
     _s.preTradeIn    = 5;
