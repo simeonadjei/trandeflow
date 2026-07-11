@@ -12,40 +12,8 @@ import { db } from "@workspace/db";
 import { accountsTable, tradesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { logger } from "./logger";
-
-// ─── Shared live price cache (mirrors assets.ts, refreshed every 30 s) ────
-const prices: Record<string, number> = {
-  BTCUSD: 67340, ETHUSD: 3412,
-  EURUSD: 1.0854, GBPUSD: 1.2718,
-  XAUUSD: 2318,   USDJPY: 156.72,
-};
-
-async function refreshPrices() {
-  try {
-    const cg = await (await fetch(
-      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd",
-      { signal: AbortSignal.timeout(6000) }
-    )).json() as any;
-    if (cg?.bitcoin?.usd)  prices.BTCUSD = cg.bitcoin.usd;
-    if (cg?.ethereum?.usd) prices.ETHUSD = cg.ethereum.usd;
-  } catch { /* keep cached */ }
-  try {
-    const fx = await (await fetch(
-      "https://api.frankfurter.app/latest?from=USD&to=EUR,GBP,JPY",
-      { signal: AbortSignal.timeout(6000) }
-    )).json() as any;
-    if (fx?.rates?.EUR) prices.EURUSD = fx.rates.EUR;
-    if (fx?.rates?.GBP) prices.GBPUSD = fx.rates.GBP;
-    if (fx?.rates?.JPY) prices.USDJPY = fx.rates.JPY;
-  } catch { /* keep cached */ }
-}
-refreshPrices();
-setInterval(refreshPrices, 30_000);
-
-export function getLivePrice(symbol: string) {
-  const base = prices[symbol] ?? 100;
-  return base * (1 + (Math.random() - 0.5) * 0.001);
-}
+import { getLivePrice, getBasePrice } from "./prices";
+import { sendTradeResultEmail } from "./emailNotifier";
 
 // ─── Session status ───────────────────────────────────────────────────────
 export interface SessionStatus {
@@ -57,14 +25,14 @@ export interface SessionStatus {
   upScore:         number;
   downScore:       number;
   winConfidence:   number;   // 0-100 percentage shown before trade fires
-  preTradeIn:      number;   // countdown seconds before trade fires (3→0)
+  preTradeIn:      number;   // countdown seconds before trade fires (5→0)
   countdown:       number;
   lastResult:      "WIN" | "LOSS" | null;
-  lastProfit:    number;
-  sessionTrades: number;
-  sessionWins:   number;
-  sessionProfit: number;
-  message:       string;
+  lastProfit:      number;
+  sessionTrades:   number;
+  sessionWins:     number;
+  sessionProfit:   number;
+  message:         string;
 }
 
 let _s: SessionStatus = {
@@ -131,22 +99,22 @@ function scoreDirection(candles: Candle[], dir: "UP" | "DOWN"): number {
 
   if (dir === "UP") {
     return [
-      rsi <= 45,                         // 1. RSI not in overbought zone
-      last.close > last.open,            // 2. Current candle bullish
+      rsi <= 45,                         // 1. RSI not overbought
+      last.close > last.open,            // 2. Bullish candle
       greenCnt >= 3,                     // 3. 3 of last 5 candles green
-      bodyLast >= bodyPrev * 0.75,       // 4. Body maintaining size
-      wickDown >= wickUp * 0.8,          // 5. Buying pressure (lower wick ≥ upper)
+      bodyLast >= bodyPrev * 0.75,       // 4. Body size maintained
+      wickDown >= wickUp * 0.8,          // 5. Buying pressure
       last.close > sma10,                // 6. Price above SMA10
       last.low  >= prev.low * 0.9998,    // 7. Higher low
       prev.low  >= prev2.low * 0.9998,   // 8. Sustained higher lows
     ].filter(Boolean).length;
   } else {
     return [
-      rsi >= 55,                         // 1. RSI not in oversold zone
-      last.close < last.open,            // 2. Current candle bearish
+      rsi >= 55,                         // 1. RSI not oversold
+      last.close < last.open,            // 2. Bearish candle
       redCnt >= 3,                       // 3. 3 of last 5 candles red
-      bodyLast >= bodyPrev * 0.75,       // 4. Body maintaining size
-      wickUp >= wickDown * 0.8,          // 5. Selling pressure (upper wick ≥ lower)
+      bodyLast >= bodyPrev * 0.75,       // 4. Body size maintained
+      wickUp >= wickDown * 0.8,          // 5. Selling pressure
       last.close < sma10,                // 6. Price below SMA10
       last.high <= prev.high * 1.0002,   // 7. Lower high
       prev.high <= prev2.high * 1.0002,  // 8. Sustained lower highs
@@ -161,7 +129,7 @@ function findBestSignal() {
   let best = { asset: "EURUSD", direction: "UP" as "UP" | "DOWN", score: 0, upScore: 0, downScore: 0 };
 
   for (const asset of ASSETS) {
-    const base    = prices[asset] ?? 100;
+    const base    = getBasePrice(asset);
     const candles = buildCandles(base);
     const up      = scoreDirection(candles, "UP");
     const down    = scoreDirection(candles, "DOWN");
@@ -179,7 +147,7 @@ function findBestSignal() {
 function winProb(score: number): number {
   if (score >= 8) return 0.98;
   if (score >= 7) return 0.96;
-  return 0.88; // 6 (we only trade at 7+)
+  return 0.88;
 }
 
 // ─── Sleep helper ─────────────────────────────────────────────────────────
@@ -249,6 +217,7 @@ async function loop() {
     const freshAccount = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
     const balance = parseFloat(freshAccount?.balance as string ?? "0");
     if (balance < 5) {
+      _s.phase   = "waiting";
       _s.message = "Balance too low — please deposit funds";
       await sleep(30_000);
       continue;
@@ -292,7 +261,6 @@ async function loop() {
       // Abort if stopped mid-trade
       const chk = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
       if (!chk?.autoInvestEnabled) {
-        // Close trade as loss (session cancelled)
         if (tradeId) {
           const exitP = getLivePrice(best.asset);
           await db.update(tradesTable)
@@ -309,7 +277,6 @@ async function loop() {
     const exitPrice = getLivePrice(best.asset);
     const prob      = winProb(best.score);
     const marketWon = best.direction === "UP" ? exitPrice >= entryPrice : exitPrice <= entryPrice;
-    // Apply weighted probability: if market agrees AND random < prob → WIN
     const won = Math.random() < prob
       ? (marketWon ? true : Math.random() < (prob - 0.5))
       : false;
@@ -325,10 +292,11 @@ async function loop() {
 
     // Update account balance
     const acc2 = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
+    let newBal = 0;
     if (acc2) {
-      const newBal     = Math.max(0, parseFloat(acc2.balance as string) + profit);
-      const newTotal   = acc2.totalTrades + 1;
-      const prevWins   = Math.round(parseFloat(acc2.winRate as string) * acc2.totalTrades / 100);
+      newBal          = Math.max(0, parseFloat(acc2.balance as string) + profit);
+      const newTotal  = acc2.totalTrades + 1;
+      const prevWins  = Math.round(parseFloat(acc2.winRate as string) * acc2.totalTrades / 100);
       const newWinRate = ((prevWins + (won ? 1 : 0)) / newTotal) * 100;
       await db.update(accountsTable).set({
         balance:     newBal.toFixed(2),
@@ -343,10 +311,21 @@ async function loop() {
     _s.sessionTrades++;
     if (won) _s.sessionWins++;
     _s.sessionProfit += profit;
-    _s.message = `${status === "WIN" ? "✓ WON" : "✗ LOST"} ${status === "WIN" ? "+" : ""}GHS ${profit.toFixed(2)} on ${best.asset} ${best.direction}`;
+    _s.message = `${won ? "✓ WON" : "✗ LOST"} ${won ? "+" : ""}GHS ${profit.toFixed(2)} on ${best.asset} ${best.direction}`;
     _s.countdown = 0;
 
     logger.info({ asset: best.asset, dir: best.direction, status, profit: profit.toFixed(2) }, "CT: trade closed");
+
+    // Send email notification (non-blocking)
+    sendTradeResultEmail({
+      accountId: 1,
+      won,
+      profit,
+      stake,
+      asset: best.asset,
+      direction: best.direction,
+      balance: newBal,
+    }).catch(() => {});
 
     // Tiny pause before next cycle so stats can be read
     await sleep(1_500);

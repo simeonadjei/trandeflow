@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { getLivePrice, getBasePrice, getPriceCache, getPriceLastRefreshedAt } from "../lib/prices";
 
 const router = Router();
 
@@ -12,72 +13,11 @@ const ASSET_DEFS = [
   { symbol: "USDJPY",  name: "USD/JPY",   payout: 100, trending: false },
 ];
 
-// ── Price cache ────────────────────────────────────────────────────────────
-interface PriceCache {
-  BTCUSD: number; ETHUSD: number;
-  EURUSD: number; GBPUSD: number;
-  XAUUSD: number; USDJPY: number;
-  updatedAt: number;
-}
-let priceCache: PriceCache = {
-  BTCUSD: 67340, ETHUSD: 3412,
-  EURUSD: 1.0854, GBPUSD: 1.2718,
-  XAUUSD: 2318, USDJPY: 156.72,
-  updatedAt: 0,
-};
-
-// Fetch live prices from free public APIs (no key needed)
-async function refreshPrices() {
-  try {
-    // Crypto: CoinGecko public API
-    const cgRes = await fetch(
-      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd",
-      { signal: AbortSignal.timeout(8000) }
-    );
-    if (cgRes.ok) {
-      const cg = await cgRes.json() as any;
-      if (cg?.bitcoin?.usd)  priceCache.BTCUSD = cg.bitcoin.usd;
-      if (cg?.ethereum?.usd) priceCache.ETHUSD = cg.ethereum.usd;
-    }
-  } catch { /* keep cached value */ }
-
-  try {
-    // Forex + Gold: exchangerate.host (free, no key)
-    const fxRes = await fetch(
-      "https://api.exchangerate.host/live?access_key=&source=USD&currencies=EUR,GBP,JPY,XAU",
-      { signal: AbortSignal.timeout(8000) }
-    );
-    // Fallback: frankfurter.app (truly free, no key)
-    const fxRes2 = await fetch(
-      "https://api.frankfurter.app/latest?from=USD&to=EUR,GBP,JPY",
-      { signal: AbortSignal.timeout(8000) }
-    );
-    if (fxRes2.ok) {
-      const fx = await fxRes2.json() as any;
-      if (fx?.rates?.EUR) priceCache.EURUSD = parseFloat((fx.rates.EUR).toFixed(5));
-      if (fx?.rates?.GBP) priceCache.GBPUSD = parseFloat((fx.rates.GBP).toFixed(5));
-      if (fx?.rates?.JPY) priceCache.USDJPY = parseFloat((fx.rates.JPY).toFixed(3));
-    }
-  } catch { /* keep cached value */ }
-
-  priceCache.updatedAt = Date.now();
-}
-
-// Refresh on startup and every 30s
-refreshPrices();
-setInterval(refreshPrices, 30_000);
-
-function livePrice(symbol: keyof Omit<PriceCache, "updatedAt">) {
-  const base = priceCache[symbol] ?? 1;
-  // Tiny realistic tick ±0.05%
-  return base * (1 + (Math.random() - 0.5) * 0.001);
-}
-
-// ── Candle generation from live base price ─────────────────────────────────
+// ── Candle generation from shared live base price ─────────────────────────
 function generateCandles(symbol: string, count = 60) {
-  const base = priceCache[symbol as keyof PriceCache] as number ?? 100;
+  const base = getBasePrice(symbol);
   const candles = [];
-  let price = base * (1 - (Math.random() * 0.005)); // start slightly below current
+  let price = base * (1 - Math.random() * 0.005);
   const now = Math.floor(Date.now() / 1000);
   const interval = 60; // 1-min candles
 
@@ -152,24 +92,26 @@ function analyzePattern(symbol: string, candles: ReturnType<typeof generateCandl
 
   return {
     pattern, signal, confidence, rsi, trend,
-    support:    parseFloat(Math.min(...candles.slice(-20).map(c => c.low)).toFixed(last.close > 100 ? 2 : 5)),
-    resistance: parseFloat(Math.max(...candles.slice(-20).map(c => c.high)).toFixed(last.close > 100 ? 2 : 5)),
+    supportLevel:    parseFloat(Math.min(...candles.slice(-20).map(c => c.low)).toFixed(last.close > 100 ? 2 : 5)),
+    resistanceLevel: parseFloat(Math.max(...candles.slice(-20).map(c => c.high)).toFixed(last.close > 100 ? 2 : 5)),
   };
 }
 
 // ── Routes ─────────────────────────────────────────────────────────────────
 router.get("/assets", (_req, res) => {
+  const cache = getPriceCache();
+  const updatedAt = getPriceLastRefreshedAt();
+
   const assets = ASSET_DEFS.map((a) => {
-    const sym = a.symbol as keyof Omit<PriceCache, "updatedAt">;
-    const price = livePrice(sym);
-    const prev  = priceCache[sym] as number;
+    const price = getLivePrice(a.symbol);
+    const prev  = cache[a.symbol as keyof typeof cache] as number ?? price;
     const change = price - prev;
     return {
       ...a,
-      price:         parseFloat(price.toFixed(price > 100 ? 2 : 5)),
-      change:        parseFloat(change.toFixed(price > 100 ? 2 : 5)),
-      changePercent: parseFloat(((change / prev) * 100).toFixed(2)),
-      pricesUpdatedAt: new Date(priceCache.updatedAt).toISOString(),
+      price:           parseFloat(price.toFixed(price > 100 ? 2 : 5)),
+      change:          parseFloat(change.toFixed(price > 100 ? 2 : 5)),
+      changePercent:   parseFloat(((change / prev) * 100).toFixed(2)),
+      pricesUpdatedAt: new Date(updatedAt || Date.now()).toISOString(),
     };
   });
   res.json(assets);

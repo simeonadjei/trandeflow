@@ -38,7 +38,7 @@ router.post("/auth/register", async (req, res) => {
     // Create account for new user
     const [account] = await db.insert(accountsTable).values({
       name,
-      balance: "1000.00",
+      balance: "0.00",
       demoBalance: "10000.00",
       currency: "GHS",
       totalProfit: "0.00",
