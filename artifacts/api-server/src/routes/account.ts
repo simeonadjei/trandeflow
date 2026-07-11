@@ -58,8 +58,22 @@ router.get("/account/stats", async (req, res) => {
 });
 
 // ── Continuous trading session ────────────────────────────────────────────
+const MIN_TRADE_BALANCE = 5;
+
 router.post("/session/start", async (req, res) => {
   try {
+    // Hard block: real balance must be at least GHS 5
+    const account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
+    const balance = parseFloat((account?.balance as string) ?? "0");
+    if (balance < MIN_TRADE_BALANCE) {
+      return res.status(400).json({
+        error: "insufficient_balance",
+        message: `Minimum balance to start trading is GHS ${MIN_TRADE_BALANCE.toFixed(2)}. Please deposit first.`,
+        currentBalance: balance,
+        minimumRequired: MIN_TRADE_BALANCE,
+      });
+    }
+
     const pct = parseFloat(req.body?.tradePercent) || 50;
     const tradePercent = Math.min(100, Math.max(1, pct));
     await startSession(tradePercent);

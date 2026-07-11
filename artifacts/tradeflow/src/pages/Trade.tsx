@@ -189,7 +189,13 @@ export default function Trade() {
     return () => clearInterval(iv);
   }, [isAdmin, token]);
 
+  const MIN_TRADE_BALANCE = 5;
+
   const handleStartSession = async () => {
+    // Guard: must have at least GHS 5 in real balance before bot can run
+    if (!isDemo && (account?.balance ?? 0) < MIN_TRADE_BALANCE) {
+      return; // button is disabled anyway, but belt-and-suspenders
+    }
     setSessionLoading(true);
     try {
       const res = await fetch("/api/session/start", {
@@ -704,8 +710,23 @@ export default function Trade() {
                 </div>
               )}
 
-              {/* The big button */}
-              {!session?.active ? (
+              {/* Low balance warning — shown instead of TRADE button in real mode */}
+              {!isDemo && !session?.active && (account?.balance ?? 0) < MIN_TRADE_BALANCE ? (
+                <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4 text-center space-y-3">
+                  <p className="text-sm font-semibold text-yellow-400">Insufficient Balance</p>
+                  <p className="text-xs text-muted-foreground">
+                    You need at least <span className="font-bold text-yellow-400">GHS {MIN_TRADE_BALANCE}.00</span> to start the bot.
+                    Your current balance is <span className="font-bold">GHS {(account?.balance ?? 0).toFixed(2)}</span>.
+                  </p>
+                  <Link
+                    href="/wallet?tab=deposit"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-profit text-white text-xs font-bold hover:bg-profit/90 transition-colors"
+                  >
+                    <ArrowUpToLine className="w-3.5 h-3.5" />
+                    Deposit Now
+                  </Link>
+                </div>
+              ) : !session?.active ? (
                 <button
                   onClick={handleStartSession}
                   disabled={sessionLoading || isDemo}
