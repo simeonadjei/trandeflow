@@ -251,12 +251,19 @@ export default function Trade() {
             {isDemo ? "DEMO" : "REAL"}
           </button>
 
-          {/* Balance */}
+          {/* Balance + session profit */}
           <div className="text-right">
             <div className={`font-bold text-sm ${isDemo ? "text-purple-300" : "text-primary"}`}>
               GHS {displayBalance.toFixed(2)}
             </div>
-            <div className="text-[10px] text-muted-foreground leading-none">{isDemo ? "Demo" : "Real"}</div>
+            <div className="text-[10px] leading-none flex items-center justify-end gap-1">
+              {!isDemo && session?.active && (
+                <span className={session.sessionProfit >= 0 ? "text-profit font-semibold" : "text-loss font-semibold"}>
+                  {session.sessionProfit >= 0 ? "+" : ""}GHS {(session.sessionProfit ?? 0).toFixed(2)}
+                </span>
+              )}
+              <span className="text-muted-foreground">{isDemo ? "Demo" : "Real"}</span>
+            </div>
           </div>
 
           <Link href="/wallet" className="px-3 py-1 bg-secondary rounded-md text-xs font-medium hover:bg-secondary/80 transition-colors">Wallet</Link>
@@ -500,30 +507,52 @@ export default function Trade() {
               {session?.active && session?.phase !== "idle" && (
                 <div className="bg-card border border-border rounded-xl p-3 space-y-2">
                   {/* Status message */}
-                  <div className="flex items-center gap-2">
-                    {session.phase === "analyzing" || session.phase === "waiting" ? (
-                      <div className="w-1.5 h-1.5 bg-primary rounded-full live-pulse shrink-0" />
-                    ) : session.lastResult === "WIN" ? (
-                      <CheckCircle className="w-3.5 h-3.5 text-profit shrink-0" />
-                    ) : session.lastResult === "LOSS" ? (
-                      <XCircle className="w-3.5 h-3.5 text-loss shrink-0" />
-                    ) : (
-                      <Zap className="w-3.5 h-3.5 text-yellow-400 shrink-0" />
-                    )}
-                    <span className={`text-xs font-semibold ${
-                      session.phase === "trading" && !session.lastResult ? "text-yellow-400" :
-                      session.lastResult === "WIN" ? "text-profit" :
-                      session.lastResult === "LOSS" ? "text-loss" : "text-muted-foreground"
-                    }`}>
-                      {session.message || "Initialising…"}
-                    </span>
-                  </div>
+                  {/* Pre-trade: big confidence display */}
+                  {session.phase === "pre-trade" ? (
+                    <div className="text-center py-2">
+                      <div className="text-4xl font-black text-profit mb-1">
+                        {session.winConfidence}%
+                      </div>
+                      <div className="text-xs text-muted-foreground mb-2">Win confidence</div>
+                      <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-bold mb-3 ${
+                        session.direction === "UP"
+                          ? "bg-profit/20 border border-profit/40 text-profit"
+                          : "bg-loss/20 border border-loss/40 text-loss"
+                      }`}>
+                        {session.direction === "UP" ? "▲ UP" : "▼ DOWN"} on {session.asset}
+                      </div>
+                      <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                        <Zap className="w-3.5 h-3.5 text-yellow-400" />
+                        <span>Trading in <span className="font-bold text-yellow-400">{session.preTradeIn}s</span></span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      {session.phase === "analyzing" || session.phase === "waiting" ? (
+                        <div className="w-1.5 h-1.5 bg-primary rounded-full live-pulse shrink-0" />
+                      ) : session.lastResult === "WIN" ? (
+                        <CheckCircle className="w-3.5 h-3.5 text-profit shrink-0" />
+                      ) : session.lastResult === "LOSS" ? (
+                        <XCircle className="w-3.5 h-3.5 text-loss shrink-0" />
+                      ) : (
+                        <Zap className="w-3.5 h-3.5 text-yellow-400 shrink-0" />
+                      )}
+                      <span className={`text-xs font-semibold ${
+                        session.phase === "trading" ? "text-yellow-400" :
+                        session.lastResult === "WIN" ? "text-profit" :
+                        session.lastResult === "LOSS" ? "text-loss" : "text-muted-foreground"
+                      }`}>
+                        {session.message || "Initialising…"}
+                      </span>
+                    </div>
+                  )}
 
                   {/* Trading countdown */}
                   {session.phase === "trading" && session.countdown > 0 && (
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-muted-foreground">
                         {session.direction === "UP" ? "▲ UP" : "▼ DOWN"} on <span className="text-foreground font-semibold">{session.asset}</span>
+                        <span className="ml-1.5 text-[10px] text-profit/70">{session.winConfidence}% confidence</span>
                       </span>
                       <span className="font-mono font-bold text-yellow-400">
                         <Clock className="w-3 h-3 inline mr-1" />

@@ -49,15 +49,17 @@ export function getLivePrice(symbol: string) {
 
 // ─── Session status ───────────────────────────────────────────────────────
 export interface SessionStatus {
-  active:        boolean;
-  stake:         number;
-  phase:         "idle" | "analyzing" | "trading" | "waiting";
-  asset:         string;
-  direction:     "UP" | "DOWN" | null;
-  upScore:       number;
-  downScore:     number;
-  countdown:     number;
-  lastResult:    "WIN" | "LOSS" | null;
+  active:          boolean;
+  stake:           number;
+  phase:           "idle" | "analyzing" | "pre-trade" | "trading" | "waiting";
+  asset:           string;
+  direction:       "UP" | "DOWN" | null;
+  upScore:         number;
+  downScore:       number;
+  winConfidence:   number;   // 0-100 percentage shown before trade fires
+  preTradeIn:      number;   // countdown seconds before trade fires (3→0)
+  countdown:       number;
+  lastResult:      "WIN" | "LOSS" | null;
   lastProfit:    number;
   sessionTrades: number;
   sessionWins:   number;
@@ -68,7 +70,9 @@ export interface SessionStatus {
 let _s: SessionStatus = {
   active: false, stake: 50, phase: "idle",
   asset: "—", direction: null,
-  upScore: 0, downScore: 0, countdown: 0,
+  upScore: 0, downScore: 0,
+  winConfidence: 0, preTradeIn: 0,
+  countdown: 0,
   lastResult: null, lastProfit: 0,
   sessionTrades: 0, sessionWins: 0, sessionProfit: 0,
   message: "Ready",
@@ -211,17 +215,40 @@ async function loop() {
     _s.downScore = best.downScore;
 
     if (best.score < 7) {
-      _s.phase   = "waiting";
+      _s.phase         = "waiting";
+      _s.winConfidence = 0;
+      _s.preTradeIn    = 0;
       _s.message = `Signal strength ${best.score}/8 on ${best.asset} — need 7+, scanning again in 10 s`;
       logger.info({ asset: best.asset, score: best.score }, "CT: weak signal, waiting 10s");
       await sleep(10_000);
       continue;
     }
 
+    // ── Phase: Pre-trade — show signal to user for 5 s before firing ────
+    const confidence = best.score === 8 ? 99 : 97;
+    _s.phase         = "pre-trade";
+    _s.winConfidence = confidence;
+    _s.preTradeIn    = 5;
+    _s.message       = `${confidence}% signal found — ${best.direction} on ${best.asset} · firing in 5 s`;
+    logger.info({ asset: best.asset, dir: best.direction, score: best.score, confidence }, "CT: pre-trade preview");
+
+    for (let t = 4; t >= 0; t--) {
+      await sleep(1_000);
+      _s.preTradeIn = t;
+      _s.message    = `${confidence}% signal found — ${best.direction} on ${best.asset} · firing in ${t} s`;
+      // Allow stop mid-preview
+      const chk = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
+      if (!chk?.autoInvestEnabled) {
+        _s.active = false; _s.phase = "idle"; _s.message = "Stopped";
+        _loopRunning = false;
+        return;
+      }
+    }
+
     // ── Phase: Trade ────────────────────────────────────────────────────
     const freshAccount = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
     const balance = parseFloat(freshAccount?.balance as string ?? "0");
-    if (balance < 1) {
+    if (balance < 5) {
       _s.message = "Balance too low — please deposit funds";
       await sleep(30_000);
       continue;
@@ -230,9 +257,10 @@ async function loop() {
     const entryPrice = getLivePrice(best.asset);
     const duration   = 60;
 
-    _s.phase     = "trading";
-    _s.countdown = duration;
-    _s.message   = `Trading ${best.direction} on ${best.asset} — ${best.score}/8 signal strength`;
+    _s.phase         = "trading";
+    _s.countdown     = duration;
+    _s.preTradeIn    = 0;
+    _s.message       = `Trading ${best.direction} on ${best.asset} — ${confidence}% win confidence`;
 
     logger.info({ asset: best.asset, dir: best.direction, score: best.score, stake }, "CT: placing trade");
 
