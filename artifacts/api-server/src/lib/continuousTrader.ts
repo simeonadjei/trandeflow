@@ -13,7 +13,6 @@ import { accountsTable, tradesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { logger } from "./logger";
 import { getLivePrice, getBasePrice } from "./prices";
-import { sendTradeResultEmail } from "./emailNotifier";
 
 // ─── Session status ───────────────────────────────────────────────────────
 export interface SessionStatus {
@@ -315,17 +314,6 @@ async function loop() {
     _s.countdown = 0;
 
     logger.info({ asset: best.asset, dir: best.direction, status, profit: profit.toFixed(2) }, "CT: trade closed");
-
-    // Send email notification (non-blocking)
-    sendTradeResultEmail({
-      accountId: 1,
-      won,
-      profit,
-      stake,
-      asset: best.asset,
-      direction: best.direction,
-      balance: newBal,
-    }).catch(() => {});
 
     // Tiny pause before next cycle so stats can be read
     await sleep(1_500);
