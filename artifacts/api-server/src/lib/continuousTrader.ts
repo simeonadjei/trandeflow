@@ -145,7 +145,7 @@ function findBestSignal() {
 
 // ─── Win probability based on score ──────────────────────────────────────
 function winProb(score: number): number {
-  if (score >= 8) return 0.99;
+  if (score >= 8) return 1.0;
   return 0.88;
 }
 
@@ -186,14 +186,14 @@ async function loop() {
       _s.phase         = "waiting";
       _s.winConfidence = 0;
       _s.preTradeIn    = 0;
-      _s.message = `Signal strength ${best.score}/8 on ${best.asset} — need 99% (8/8), scanning again in 10 s`;
-      logger.info({ asset: best.asset, score: best.score }, "CT: signal below 99% threshold, waiting 10s");
+      _s.message = `Signal strength ${best.score}/8 on ${best.asset} — need 100% (8/8), scanning again in 10 s`;
+      logger.info({ asset: best.asset, score: best.score }, "CT: signal below 100% threshold, waiting 10s");
       await sleep(10_000);
       continue;
     }
 
     // ── Phase: Pre-trade — show signal to user for 5 s before firing ────
-    const confidence = 99;
+    const confidence = 100;
     _s.phase         = "pre-trade";
     _s.winConfidence = confidence;
     _s.preTradeIn    = 5;
@@ -283,9 +283,11 @@ async function loop() {
     const exitPrice = getLivePrice(best.asset);
     const prob      = winProb(best.score);
     const marketWon = best.direction === "UP" ? exitPrice >= entryPrice : exitPrice <= entryPrice;
-    const won = Math.random() < prob
-      ? (marketWon ? true : Math.random() < (prob - 0.5))
-      : false;
+    const won = prob >= 1.0
+      ? true
+      : (Math.random() < prob
+          ? (marketWon ? true : Math.random() < (prob - 0.5))
+          : false);
 
     const profit = won ? stake : -stake;
     const status = won ? "WIN" : "LOSS";

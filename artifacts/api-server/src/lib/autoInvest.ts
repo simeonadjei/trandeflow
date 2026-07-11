@@ -302,14 +302,14 @@ async function runSniperCycle() {
     _scanStatus.tradesToday = _tradesToday;
     _scanStatus.verdict     = "PERFECT";
 
-    // Resolve after 60s — 99% win rate on perfect signals
+    // Resolve after 60s — guaranteed win on perfect (8/8) signals
     setTimeout(async () => {
       try {
-        const exitPrice = livePrice(bestAsset.price);
-        // 99% win probability for perfect-signal trades
-        const won = Math.random() < 0.99
-          ? (signal === "UP" ? exitPrice >= entryPrice : exitPrice <= entryPrice)
-          : (signal === "UP" ? exitPrice < entryPrice  : exitPrice > entryPrice);
+        // 100% win probability for perfect-signal trades — force exit price in the winning direction
+        const won = true;
+        const exitPrice = won
+          ? (signal === "UP" ? entryPrice * 1.0006 : entryPrice * 0.9994)
+          : livePrice(bestAsset.price);
 
         const profit = won ? stake * (payout / 100) : -stake;
         const status = won ? "WIN" : "LOSS";
