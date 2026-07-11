@@ -1,17 +1,14 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { startAutoInvestEngine } from "./lib/autoInvest";
+import { initContinuousTrader } from "./lib/continuousTrader";
 
 const rawPort = process.env["PORT"];
 
 if (!rawPort) {
-  throw new Error(
-    "PORT environment variable is required but was not provided.",
-  );
+  throw new Error("PORT environment variable is required but was not provided.");
 }
 
 const port = Number(rawPort);
-
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
@@ -21,7 +18,6 @@ app.listen(port, (err) => {
     logger.error({ err }, "Error listening on port");
     process.exit(1);
   }
-
   logger.info({ port }, "Server listening");
-  startAutoInvestEngine();
+  initContinuousTrader().catch(e => logger.error(e, "CT init failed"));
 });

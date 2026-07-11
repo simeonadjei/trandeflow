@@ -1,15 +1,15 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "wouter";
 import {
   useListAssets, useGetCandles, useAnalyzePattern, useListTrades,
-  usePlaceTrade, useToggleAutoInvest, useGetAutoInvestStatus, useGetAccount,
+  usePlaceTrade, useGetAccount,
   getListTradesQueryKey, getGetAccountQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useNotifications, useAutoTradeNotifications } from "../lib/useNotifications";
+import { useNotifications } from "../lib/useNotifications";
 import { useDemoMode } from "../lib/DemoModeContext";
 import { useAuth } from "../lib/AuthContext";
-import { TrendingUp, TrendingDown, ChevronDown, ArrowUpCircle, ArrowDownCircle, Bot, Clock, CheckCircle, XCircle, Activity, Bell, BellOff, FlaskConical, Target, Crosshair, Radar, Zap } from "lucide-react";
+import { TrendingUp, TrendingDown, ChevronDown, Clock, CheckCircle, XCircle, FlaskConical, Zap, StopCircle, Activity } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart, Bar, Line
 } from "recharts";
@@ -123,46 +123,55 @@ function TradeTimer({ closedAt, duration, createdAt }: { closedAt: string | null
 export default function Trade() {
   const [selectedSymbol, setSelectedSymbol] = useState("EURUSD");
   const [amount, setAmount] = useState(50);
-  const [duration, setDuration] = useState(60);
   const [showAssets, setShowAssets] = useState(false);
-  const [scanStatus, setScanStatus] = useState<any>(null);
-  const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
-    typeof Notification !== "undefined" ? Notification.permission : "default"
-  );
+  const [session, setSession] = useState<any>(null);
+  const [sessionLoading, setSessionLoading] = useState(false);
 
   const { isDemo, toggleDemo } = useDemoMode();
   const { user, logout } = useAuth();
   const queryClient = useQueryClient();
-  const { requestPermission, notify } = useNotifications();
+  const { notify } = useNotifications();
 
-  // Poll sniper bot scan status every 5s
+  // Poll session status every second
   useEffect(() => {
-    const fetchScan = () =>
-      fetch("/api/auto-invest/scan").then(r => r.json()).then(setScanStatus).catch(() => {});
-    fetchScan();
-    const iv = setInterval(fetchScan, 5000);
+    const poll = () =>
+      fetch("/api/session/status").then(r => r.json()).then(setSession).catch(() => {});
+    poll();
+    const iv = setInterval(poll, 1000);
     return () => clearInterval(iv);
   }, []);
+
+  const handleStartSession = async () => {
+    setSessionLoading(true);
+    try {
+      const res = await fetch("/api/session/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stake: amount }),
+      });
+      const data = await res.json();
+      setSession(data.status);
+    } finally {
+      setSessionLoading(false);
+    }
+  };
+
+  const handleStopSession = async () => {
+    setSessionLoading(true);
+    try {
+      const res = await fetch("/api/session/stop", { method: "POST" });
+      const data = await res.json();
+      setSession(data.status);
+    } finally {
+      setSessionLoading(false);
+    }
+  };
 
   const { data: assets } = useListAssets();
   const { data: candles } = useGetCandles(selectedSymbol, { query: { enabled: !!selectedSymbol } });
   const { data: pattern } = useAnalyzePattern(selectedSymbol, { query: { enabled: !!selectedSymbol, refetchInterval: 15000 } });
-  const { data: trades, refetch: refetchTrades } = useListTrades({ query: { refetchInterval: 5000 } });
-  const { data: autoStatus, refetch: refetchAuto } = useGetAutoInvestStatus();
-  const { data: account } = useGetAccount({ query: { refetchInterval: 8000 } });
-
-  // Map trades into lightweight snapshots for notification tracking
-  const tradeSnapshots = trades?.map((t) => ({
-    id: t.id,
-    status: t.status,
-    isAuto: t.isAuto ?? false,
-    symbol: t.symbol,
-    direction: t.direction as "UP" | "DOWN",
-    amount: t.amount,
-    profit: t.profit,
-  }));
-
-  useAutoTradeNotifications(tradeSnapshots, autoStatus?.enabled ?? false, notify);
+  const { data: trades, refetch: refetchTrades } = useListTrades({ query: { refetchInterval: 3000 } });
+  const { data: account } = useGetAccount({ query: { refetchInterval: 3000 } });
 
   const placeTrade = usePlaceTrade({
     mutation: {
@@ -176,27 +185,17 @@ export default function Trade() {
     },
   });
 
-  const toggleAuto = useToggleAutoInvest({
-    mutation: {
-      onSuccess: async () => {
-        refetchAuto();
-        // When enabling, ask for notification permission
-        if (!autoStatus?.enabled) {
-          const granted = await requestPermission();
-          setNotifPermission(granted ? "granted" : "denied");
-        }
-      },
-    },
-  });
-
   const selectedAsset = assets?.find((a) => a.symbol === selectedSymbol);
   const displayBalance = isDemo ? (account?.demoBalance ?? 0) : (account?.balance ?? 0);
   const modeTrades = trades?.filter((t) => (isDemo ? t.isDemo : !t.isDemo)) ?? [];
   const openTrades = modeTrades.filter((t) => t.status === "OPEN");
   const closedTrades = modeTrades.filter((t) => t.status !== "OPEN").slice(0, 15);
 
+  // unused suppressor
+  void notify;
+
   const handleTrade = (direction: "UP" | "DOWN") => {
-    placeTrade.mutate({ data: { symbol: selectedSymbol, direction, amount, duration, isDemo } });
+    placeTrade.mutate({ data: { symbol: selectedSymbol, direction, amount, duration: 60, isDemo } });
   };
 
   const signalColor = pattern?.signal === "BUY" ? "text-profit" : pattern?.signal === "SELL" ? "text-loss" : "text-yellow-400";
@@ -451,153 +450,122 @@ export default function Trade() {
               </div>
             </div>
 
-            {/* Duration */}
-            <div className="mb-6">
-              <label className="text-xs text-muted-foreground font-medium mb-1.5 block">Duration</label>
-              <div className="flex gap-1.5">
-                {[{ l: "1 min", v: 60 }, { l: "3 min", v: 180 }, { l: "5 min", v: 300 }].map((d) => (
-                  <button
-                    key={d.v}
-                    onClick={() => setDuration(d.v)}
-                    className={`flex-1 py-1.5 text-xs rounded-lg font-medium transition-colors ${duration === d.v ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground hover:bg-secondary/80"}`}
-                  >
-                    {d.l}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Potential payout */}
+            {/* Payout — always 1 min, 100% payout */}
             {selectedAsset && (
               <div className="bg-profit/10 border border-profit/20 rounded-lg p-3 mb-4 text-sm">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">If you win:</span>
-                  <span className="font-bold text-profit">+GHS {(amount * selectedAsset.payout / 100).toFixed(2)}</span>
+                  <span className="font-bold text-profit">+GHS {amount.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between mt-1">
-                  <span className="text-muted-foreground">Payout rate:</span>
-                  <span className="font-semibold">{selectedAsset.payout}%</span>
+                  <span className="text-muted-foreground">Duration · Payout:</span>
+                  <span className="font-semibold">1 min · 100%</span>
                 </div>
               </div>
             )}
 
-            {/* Trade Buttons */}
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                onClick={() => handleTrade("UP")}
-                disabled={placeTrade.isPending}
-                className="flex flex-col items-center gap-1.5 py-4 bg-profit/15 border border-profit/30 rounded-xl font-bold text-profit hover:bg-profit/25 transition-colors disabled:opacity-50"
-              >
-                <ArrowUpCircle className="w-7 h-7" />
-                <span className="text-sm">UP</span>
-                <span className="text-xs font-normal text-profit/70">Price goes higher</span>
-              </button>
-              <button
-                onClick={() => handleTrade("DOWN")}
-                disabled={placeTrade.isPending}
-                className="flex flex-col items-center gap-1.5 py-4 bg-loss/15 border border-loss/30 rounded-xl font-bold text-loss hover:bg-loss/25 transition-colors disabled:opacity-50"
-              >
-                <ArrowDownCircle className="w-7 h-7" />
-                <span className="text-sm">DOWN</span>
-                <span className="text-xs font-normal text-loss/70">Price goes lower</span>
-              </button>
-            </div>
-          </div>
+              {/* ── TRADE / STOP Button ── */}
+            <div className="mt-2 space-y-3">
 
-          {/* ── Sniper Bot ── */}
-          <div className="p-4 border-b border-border">
-            {/* Header row */}
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Crosshair className="w-4 h-4 text-primary" />
-                <span className="font-bold text-sm">Sniper Bot</span>
-                <span className="px-1.5 py-0.5 bg-primary/20 border border-primary/30 text-primary text-[10px] font-bold rounded-full">8/8</span>
-              </div>
-              <div className="flex items-center gap-2">
-                {notifPermission === "granted" ? (
-                  <span className="flex items-center gap-1 text-xs text-profit"><Bell className="w-3 h-3" /></span>
-                ) : notifPermission !== "denied" ? (
-                  <button onClick={async () => { const g = await requestPermission(); setNotifPermission(g ? "granted" : "denied"); }}
-                    className="text-xs text-primary hover:underline flex items-center gap-1">
-                    <Bell className="w-3 h-3" />
-                  </button>
-                ) : null}
-                <button
-                  onClick={() => toggleAuto.mutate({ data: { enabled: !autoStatus?.enabled, stakeAmount: 10, maxDailyTrades: 999 } })}
-                  className={`relative w-10 h-5 rounded-full transition-colors ${autoStatus?.enabled ? "bg-profit" : "bg-secondary"}`}
-                >
-                  <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all shadow-sm ${autoStatus?.enabled ? "left-5" : "left-0.5"}`} />
-                </button>
-              </div>
-            </div>
-
-            {!autoStatus?.enabled ? (
-              <p className="text-xs text-muted-foreground">Enable to start scanning all assets for 100% confluence signals. Stakes your <strong className="text-foreground">full balance</strong> on every trade.</p>
-            ) : (
-              <>
-                {/* Status banner */}
-                {scanStatus?.verdict === "PERFECT" ? (
-                  <div className="flex items-center gap-2 mb-3 p-2.5 bg-profit/10 border border-profit/30 rounded-lg">
-                    <Zap className="w-4 h-4 text-profit shrink-0" />
-                    <div>
-                      <div className="text-xs font-black text-profit">PERFECT SIGNAL — TRADING NOW</div>
-                      <div className="text-[10px] text-profit/70">{scanStatus?.asset} · {scanStatus?.direction} · Full balance staked</div>
-                    </div>
+              {/* Signal strength bars — only show when session active */}
+              {session?.active && session?.phase !== "idle" && (
+                <div className="bg-card border border-border rounded-xl p-3 space-y-2">
+                  {/* Status message */}
+                  <div className="flex items-center gap-2">
+                    {session.phase === "analyzing" || session.phase === "waiting" ? (
+                      <div className="w-1.5 h-1.5 bg-primary rounded-full live-pulse shrink-0" />
+                    ) : session.lastResult === "WIN" ? (
+                      <CheckCircle className="w-3.5 h-3.5 text-profit shrink-0" />
+                    ) : session.lastResult === "LOSS" ? (
+                      <XCircle className="w-3.5 h-3.5 text-loss shrink-0" />
+                    ) : (
+                      <Zap className="w-3.5 h-3.5 text-yellow-400 shrink-0" />
+                    )}
+                    <span className={`text-xs font-semibold ${
+                      session.phase === "trading" && !session.lastResult ? "text-yellow-400" :
+                      session.lastResult === "WIN" ? "text-profit" :
+                      session.lastResult === "LOSS" ? "text-loss" : "text-muted-foreground"
+                    }`}>
+                      {session.message || "Initialising…"}
+                    </span>
                   </div>
-                ) : (
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="w-1.5 h-1.5 bg-primary rounded-full live-pulse shrink-0" />
-                    <div className="text-xs text-muted-foreground">
-                      Hunting perfect signal on <span className="text-foreground font-semibold">{scanStatus?.asset ?? "—"}</span>
-                      <span className="ml-1 text-muted-foreground/60">· next scan in {scanStatus?.nextScanIn ?? 30}s</span>
-                    </div>
-                  </div>
-                )}
 
-                {/* Condition checklist */}
-                {scanStatus?.conditions?.length > 0 && (
-                  <div className="bg-card border border-border rounded-lg p-2.5 mb-3 space-y-1.5">
-                    <div className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide mb-2 flex items-center gap-1.5">
-                      <Radar className="w-3 h-3" /> Last Scan — {scanStatus.conditionsPassed}/8 conditions met
+                  {/* Trading countdown */}
+                  {session.phase === "trading" && session.countdown > 0 && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">
+                        {session.direction === "UP" ? "▲ UP" : "▼ DOWN"} on <span className="text-foreground font-semibold">{session.asset}</span>
+                      </span>
+                      <span className="font-mono font-bold text-yellow-400">
+                        <Clock className="w-3 h-3 inline mr-1" />
+                        {session.countdown}s
+                      </span>
                     </div>
-                    {scanStatus.conditions.map((c: any, i: number) => (
-                      <div key={i} className="flex items-start gap-2 text-xs">
-                        {c.passed
-                          ? <CheckCircle className="w-3 h-3 text-profit shrink-0 mt-0.5" />
-                          : <XCircle    className="w-3 h-3 text-loss/60 shrink-0 mt-0.5" />}
-                        <div className={c.passed ? "text-foreground" : "text-muted-foreground"}>
-                          <span className="font-semibold">{c.name}</span>
-                          <span className="text-[10px] ml-1 opacity-70">{c.detail}</span>
+                  )}
+
+                  {/* Signal score bars */}
+                  {(session.upScore > 0 || session.downScore > 0) && (
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 text-[10px]">
+                        <span className="text-profit w-16">UP  {session.upScore}/8</span>
+                        <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
+                          <div className="h-full bg-profit rounded-full transition-all" style={{ width: `${(session.upScore / 8) * 100}%` }} />
                         </div>
                       </div>
-                    ))}
-                    {/* Progress bar */}
-                    <div className="mt-2 h-1.5 bg-secondary rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all ${scanStatus.conditionsPassed === 8 ? "bg-profit" : scanStatus.conditionsPassed >= 5 ? "bg-yellow-400" : "bg-primary/50"}`}
-                        style={{ width: `${(scanStatus.conditionsPassed / 8) * 100}%` }}
-                      />
+                      <div className="flex items-center gap-2 text-[10px]">
+                        <span className="text-loss w-16">DN  {session.downScore}/8</span>
+                        <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
+                          <div className="h-full bg-loss rounded-full transition-all" style={{ width: `${(session.downScore / 8) * 100}%` }} />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Session stats */}
+                  <div className="grid grid-cols-3 gap-1.5 pt-1">
+                    <div className="bg-background rounded-lg p-1.5 text-center">
+                      <div className="text-[10px] text-muted-foreground">Trades</div>
+                      <div className="font-bold text-xs">{session.sessionTrades}</div>
+                    </div>
+                    <div className="bg-background rounded-lg p-1.5 text-center">
+                      <div className="text-[10px] text-muted-foreground">Won</div>
+                      <div className="font-bold text-xs text-profit">{session.sessionWins}</div>
+                    </div>
+                    <div className="bg-background rounded-lg p-1.5 text-center">
+                      <div className="text-[10px] text-muted-foreground">Profit</div>
+                      <div className={`font-bold text-xs ${session.sessionProfit >= 0 ? "text-profit" : "text-loss"}`}>
+                        {session.sessionProfit >= 0 ? "+" : ""}GHS {session.sessionProfit.toFixed(2)}
+                      </div>
                     </div>
                   </div>
-                )}
-
-                {/* Stats row */}
-                <div className="grid grid-cols-3 gap-2 text-xs">
-                  <div className="bg-card border border-border rounded-lg p-2 text-center">
-                    <div className="text-muted-foreground text-[10px]">Trades</div>
-                    <div className="font-bold">{scanStatus?.tradesToday ?? 0}</div>
-                  </div>
-                  <div className="bg-card border border-border rounded-lg p-2 text-center">
-                    <div className="text-muted-foreground text-[10px]">Won</div>
-                    <div className="font-bold text-profit">{scanStatus?.totalWon ?? 0}</div>
-                  </div>
-                  <div className="bg-card border border-border rounded-lg p-2 text-center">
-                    <div className="text-muted-foreground text-[10px]">Stake</div>
-                    <div className="font-bold text-primary text-[10px]">Full Bal.</div>
-                  </div>
                 </div>
-              </>
-            )}
+              )}
+
+              {/* The big button */}
+              {!session?.active ? (
+                <button
+                  onClick={handleStartSession}
+                  disabled={sessionLoading || isDemo}
+                  className="w-full py-4 rounded-xl font-black text-base tracking-wide bg-profit hover:bg-profit/90 text-white transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-profit/20"
+                >
+                  <Activity className="w-5 h-5" />
+                  {sessionLoading ? "Starting…" : isDemo ? "TRADE (Real mode only)" : "TRADE"}
+                </button>
+              ) : (
+                <button
+                  onClick={handleStopSession}
+                  disabled={sessionLoading}
+                  className="w-full py-4 rounded-xl font-black text-base tracking-wide bg-loss hover:bg-loss/90 text-white transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-loss/20"
+                >
+                  <StopCircle className="w-5 h-5" />
+                  {sessionLoading ? "Stopping…" : "STOP"}
+                </button>
+              )}
+
+              {isDemo && (
+                <p className="text-center text-xs text-muted-foreground">Switch to <strong className="text-foreground">Real</strong> mode to use the bot</p>
+              )}
+            </div>
           </div>
 
           {/* Open Trades */}

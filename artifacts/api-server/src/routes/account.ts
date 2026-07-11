@@ -2,15 +2,13 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { accountsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
-import { getScanStatus } from "../lib/autoInvest";
+import { startSession, stopSession, getSessionStatus } from "../lib/continuousTrader";
 
 const router = Router();
 
 router.get("/account", async (req, res) => {
   try {
-    let account = await db.query.accountsTable.findFirst({
-      where: eq(accountsTable.id, 1),
-    });
+    let account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
     if (!account) {
       const [created] = await db.insert(accountsTable).values({
         name: "Kwame Mensah",
@@ -26,13 +24,13 @@ router.get("/account", async (req, res) => {
     res.json({
       id: account.id,
       name: account.name,
-      balance: parseFloat(account.balance),
-      demoBalance: parseFloat(account.demoBalance),
+      balance: parseFloat(account.balance as string),
+      demoBalance: parseFloat(account.demoBalance as string),
       currency: account.currency,
       autoInvestEnabled: account.autoInvestEnabled,
-      totalProfit: parseFloat(account.totalProfit),
+      totalProfit: parseFloat(account.totalProfit as string),
       totalTrades: account.totalTrades,
-      winRate: parseFloat(account.winRate),
+      winRate: parseFloat(account.winRate as string),
     });
   } catch (err) {
     req.log.error(err);
@@ -42,28 +40,16 @@ router.get("/account", async (req, res) => {
 
 router.get("/account/stats", async (req, res) => {
   try {
-    const account = await db.query.accountsTable.findFirst({
-      where: eq(accountsTable.id, 1),
-    });
-    if (!account) {
-      return res.json({
-        totalProfit: 0,
-        totalTrades: 0,
-        winRate: 0,
-        todayProfit: 0,
-        streak: 0,
-        bestTrade: 0,
-        avgReturn: 0,
-      });
-    }
+    const account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
+    if (!account) return res.json({ totalProfit: 0, totalTrades: 0, winRate: 0, todayProfit: 0, streak: 0, bestTrade: 0, avgReturn: 0 });
     res.json({
-      totalProfit: parseFloat(account.totalProfit),
+      totalProfit: parseFloat(account.totalProfit as string),
       totalTrades: account.totalTrades,
-      winRate: parseFloat(account.winRate),
-      todayProfit: 38.50,
-      streak: 4,
-      bestTrade: 127.50,
-      avgReturn: 5.32,
+      winRate:     parseFloat(account.winRate as string),
+      todayProfit: 0,
+      streak:      0,
+      bestTrade:   0,
+      avgReturn:   0,
     });
   } catch (err) {
     req.log.error(err);
@@ -71,9 +57,30 @@ router.get("/account/stats", async (req, res) => {
   }
 });
 
-// Sniper bot scan status — live read from memory
-router.get("/auto-invest/scan", (_req, res) => {
-  res.json(getScanStatus());
+// ── Continuous trading session ────────────────────────────────────────────
+router.post("/session/start", async (req, res) => {
+  try {
+    const stake = parseFloat(req.body?.stake) || 50;
+    if (stake < 1) return res.status(400).json({ error: "Stake must be at least GHS 1" });
+    await startSession(stake);
+    res.json({ ok: true, status: getSessionStatus() });
+  } catch (err) {
+    req.log.error(err);
+    res.status(500).json({ error: "Failed to start session" });
+  }
+});
+
+router.post("/session/stop", async (_req, res) => {
+  try {
+    await stopSession();
+    res.json({ ok: true, status: getSessionStatus() });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to stop session" });
+  }
+});
+
+router.get("/session/status", (_req, res) => {
+  res.json(getSessionStatus());
 });
 
 export default router;
