@@ -11,13 +11,13 @@ router.get("/account", async (req, res) => {
     let account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
     if (!account) {
       const [created] = await db.insert(accountsTable).values({
-        name: "Kwame Mensah",
-        balance: "1250.00",
+        name: "Trader",
+        balance: "0.00",
         demoBalance: "10000.00",
         currency: "GHS",
-        totalProfit: "250.00",
-        totalTrades: 47,
-        winRate: "68.09",
+        totalProfit: "0.00",
+        totalTrades: 0,
+        winRate: "0.00",
       }).returning();
       account = created;
     }
