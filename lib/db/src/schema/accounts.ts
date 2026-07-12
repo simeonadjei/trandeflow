@@ -16,6 +16,9 @@ export const accountsTable = pgTable("accounts", {
   totalProfit: numeric("total_profit", { precision: 18, scale: 2 }).notNull().default("0.00"),
   totalTrades: integer("total_trades").notNull().default(0),
   winRate: numeric("win_rate", { precision: 5, scale: 2 }).notNull().default("0.00"),
+  // Realized profit/loss in USDT from real KuCoin trading — separate pool from the
+  // GHS `balance` field above (which tracks Paystack deposits/withdrawals only).
+  realizedPnlUsd: numeric("realized_pnl_usd", { precision: 18, scale: 4 }).notNull().default("0.00"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

@@ -1,33 +1,36 @@
 /**
- * Continuous Trading Engine
- * ─────────────────────────
+ * Continuous Trading Engine — REAL KuCoin execution
+ * ──────────────────────────────────────────────────
  * Runs server-side forever until stopped.
- * Each cycle: analyse every asset, pick the direction (UP or DOWN) that
- * scores highest on 8 technical conditions, trade if score ≥ 7/8,
- * otherwise wait 10 s and scan again.
- * Win rate: 8/8 → 98 %, 7/8 → 96 %.
+ * Scans BTC-USDT / ETH-USDT for a perfect 8/8 bullish (UP-only) signal.
+ * On a perfect signal it places a REAL market buy on KuCoin sized as a
+ * percentage of the user's real free USDT balance, watches it for up to
+ * a short window, and exits (real market sell) the instant the signal
+ * reverses, a take-profit hits, or a stop-loss hits — whichever comes first.
+ *
+ * There is no guaranteed outcome. Every trade is a real order against real
+ * market prices; wins and losses both happen.
  */
 
 import { db } from "@workspace/db";
 import { accountsTable, tradesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { logger } from "./logger";
-import { getLivePrice, getBasePrice } from "./prices";
+import {
+  hasKucoinCredentials, getFreeBalance, getKlines, getPrice,
+  marketBuy, marketSell, type Candle,
+} from "./kucoinClient";
 
 // ─── Session status ───────────────────────────────────────────────────────
 export interface SessionStatus {
   active:          boolean;
   stake:           number;
-  tradePercent:    number;   // % of balance used as stake each trade
-  phase:           "idle" | "analyzing" | "pre-trade" | "trading" | "waiting";
+  tradePercent:    number;   // % of real USDT balance used as stake each trade
+  phase:           "idle" | "analyzing" | "trading" | "waiting" | "error";
   asset:           string;
-  direction:       "UP" | "DOWN" | null;
+  direction:       "UP" | null;
   upScore:         number;
-  downScore:       number;
-  winConfidence:   number;   // 0-100 percentage shown before trade fires
-  preTradeIn:      number;   // countdown seconds before trade fires (5→0)
-  countdown:       number;
-  lastResult:      "WIN" | "LOSS" | null;
+  lastResult:      "WIN" | "LOSS" | "DRAW" | null;
   lastProfit:      number;
   sessionTrades:   number;
   sessionWins:     number;
@@ -37,10 +40,7 @@ export interface SessionStatus {
 
 let _s: SessionStatus = {
   active: false, stake: 0, tradePercent: 50, phase: "idle",
-  asset: "—", direction: null,
-  upScore: 0, downScore: 0,
-  winConfidence: 0, preTradeIn: 0,
-  countdown: 0,
+  asset: "—", direction: null, upScore: 0,
   lastResult: null, lastProfit: 0,
   sessionTrades: 0, sessionWins: 0, sessionProfit: 0,
   message: "Ready",
@@ -48,28 +48,7 @@ let _s: SessionStatus = {
 
 export function getSessionStatus(): SessionStatus { return { ..._s }; }
 
-// ─── Candle helpers ───────────────────────────────────────────────────────
-interface Candle { open: number; close: number; high: number; low: number; volume: number; }
-
-function buildCandles(base: number, n = 30): Candle[] {
-  const out: Candle[] = [];
-  let p = base * (1 - Math.random() * 0.003);
-  const vol = base < 1000 ? 0.0009 : 0.003;
-  for (let i = 0; i < n; i++) {
-    const open  = p;
-    const move  = (Math.random() - 0.47) * base * vol;
-    const close = open + move;
-    out.push({
-      open, close,
-      high:   Math.max(open, close) + Math.random() * base * vol * 0.3,
-      low:    Math.min(open, close) - Math.random() * base * vol * 0.3,
-      volume: Math.floor(Math.random() * 4000) + 800,
-    });
-    p = close;
-  }
-  return out;
-}
-
+// ─── RSI ────────────────────────────────────────────────────────────────
 function calcRSI(candles: Candle[], period = 14): number {
   const slice = candles.slice(-(period + 1));
   let gains = 0, losses = 0;
@@ -81,251 +60,258 @@ function calcRSI(candles: Candle[], period = 14): number {
   return Math.round(100 - 100 / (1 + gains / losses));
 }
 
-// ─── 8-condition scorer for each direction ────────────────────────────────
-function scoreDirection(candles: Candle[], dir: "UP" | "DOWN"): number {
+// ─── 8-condition UP-only scorer (long-only: real spot can't short) ───────
+function scoreUp(candles: Candle[]): number {
+  if (candles.length < 12) return 0;
   const last  = candles[candles.length - 1];
   const prev  = candles[candles.length - 2];
   const prev2 = candles[candles.length - 3];
   const recent = candles.slice(-5);
 
-  const rsi       = calcRSI(candles);
-  const sma10     = candles.slice(-10).reduce((s, c) => s + c.close, 0) / 10;
-  const bodyLast  = Math.abs(last.close - last.open);
-  const bodyPrev  = Math.abs(prev.close - prev.open);
-  const wickDown  = Math.min(last.open, last.close) - last.low;
-  const wickUp    = last.high - Math.max(last.open, last.close);
-  const greenCnt  = recent.filter(c => c.close > c.open).length;
-  const redCnt    = recent.filter(c => c.close < c.open).length;
+  const rsi      = calcRSI(candles);
+  const sma10    = candles.slice(-10).reduce((s, c) => s + c.close, 0) / 10;
+  const bodyLast = Math.abs(last.close - last.open);
+  const bodyPrev = Math.abs(prev.close - prev.open);
+  const wickDown = Math.min(last.open, last.close) - last.low;
+  const wickUp   = last.high - Math.max(last.open, last.close);
+  const greenCnt = recent.filter(c => c.close > c.open).length;
 
-  if (dir === "UP") {
-    return [
-      rsi <= 45,                         // 1. RSI not overbought
-      last.close > last.open,            // 2. Bullish candle
-      greenCnt >= 3,                     // 3. 3 of last 5 candles green
-      bodyLast >= bodyPrev * 0.75,       // 4. Body size maintained
-      wickDown >= wickUp * 0.8,          // 5. Buying pressure
-      last.close > sma10,                // 6. Price above SMA10
-      last.low  >= prev.low * 0.9998,    // 7. Higher low
-      prev.low  >= prev2.low * 0.9998,   // 8. Sustained higher lows
-    ].filter(Boolean).length;
-  } else {
-    return [
-      rsi >= 55,                         // 1. RSI not oversold
-      last.close < last.open,            // 2. Bearish candle
-      redCnt >= 3,                       // 3. 3 of last 5 candles red
-      bodyLast >= bodyPrev * 0.75,       // 4. Body size maintained
-      wickUp >= wickDown * 0.8,          // 5. Selling pressure
-      last.close < sma10,                // 6. Price below SMA10
-      last.high <= prev.high * 1.0002,   // 7. Lower high
-      prev.high <= prev2.high * 1.0002,  // 8. Sustained lower highs
-    ].filter(Boolean).length;
-  }
+  return [
+    rsi <= 45,                      // 1. RSI not overbought
+    last.close > last.open,         // 2. Bullish candle
+    greenCnt >= 3,                  // 3. 3 of last 5 candles green
+    bodyLast >= bodyPrev * 0.75,    // 4. Body size maintained
+    wickDown >= wickUp * 0.8,       // 5. Buying pressure
+    last.close > sma10,             // 6. Price above SMA10
+    last.low  >= prev.low * 0.9998, // 7. Higher low
+    prev.low  >= prev2.low * 0.9998,// 8. Sustained higher lows
+  ].filter(Boolean).length;
 }
 
-// ─── Find best signal across all assets ──────────────────────────────────
-const ASSETS = ["BTCUSD", "ETHUSD", "EURUSD", "GBPUSD", "XAUUSD", "USDJPY"];
+// ─── Assets — real KuCoin spot pairs only ────────────────────────────────
+const ASSETS = ["BTC-USDT", "ETH-USDT"];
 
-function findBestSignal() {
-  let best = { asset: "EURUSD", direction: "UP" as "UP" | "DOWN", score: 0, upScore: 0, downScore: 0 };
-
+async function findBestSignal(): Promise<{ asset: string; score: number } | null> {
+  let best: { asset: string; score: number } | null = null;
   for (const asset of ASSETS) {
-    const base    = getBasePrice(asset);
-    const candles = buildCandles(base);
-    const up      = scoreDirection(candles, "UP");
-    const down    = scoreDirection(candles, "DOWN");
-    const score   = Math.max(up, down);
-    const dir     = up >= down ? "UP" : "DOWN";
-
-    if (score > best.score) {
-      best = { asset, direction: dir, score, upScore: up, downScore: down };
+    try {
+      const candles = await getKlines(asset, 30);
+      const score = scoreUp(candles);
+      if (!best || score > best.score) best = { asset, score };
+    } catch (e) {
+      logger.warn({ asset, err: (e as Error).message }, "CT: klines fetch failed, skipping asset this scan");
     }
   }
   return best;
 }
 
-// ─── Win probability based on score ──────────────────────────────────────
-function winProb(score: number): number {
-  if (score >= 8) return 1.0;
-  return 0.88;
-}
+// ─── Tunables ─────────────────────────────────────────────────────────────
+const SCAN_INTERVAL_MS  = 3_000;
+const TRADE_WINDOW_MS   = 5_000;   // max time to hold before forced exit
+const CHECK_INTERVAL_MS = 1_000;   // how often we re-check signal/price mid-trade
+const TAKE_PROFIT_PCT   = 0.004;   // +0.4%
+const STOP_LOSS_PCT     = 0.003;   // -0.3%
+const MIN_TRADE_USDT    = 5;       // floor so fees don't eat the trade
 
-// ─── Sleep helper ─────────────────────────────────────────────────────────
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
 // ─── Main loop ────────────────────────────────────────────────────────────
 let _loopRunning = false;
 
+async function isEnabled(): Promise<boolean> {
+  const account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
+  return Boolean(account?.autoInvestEnabled);
+}
+
 async function loop() {
   while (true) {
-    // Check if session still active in DB
-    const account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
-    if (!account?.autoInvestEnabled) {
-      _s.active  = false;
-      _s.phase   = "idle";
-      _s.message = "Stopped";
+    if (!(await isEnabled())) {
+      _s.active = false; _s.phase = "idle"; _s.message = "Stopped";
       _loopRunning = false;
-      logger.info("Continuous trader: session stopped");
+      logger.info("CT: session stopped");
       return;
     }
 
-    // Read trade percentage — actual stake computed fresh just before each trade
-    const tradePercent = Math.min(100, Math.max(1, parseFloat((account.tradePercentage as string) ?? "50")));
-    _s.tradePercent = tradePercent;
-
-    // ── Phase: Analyse ──────────────────────────────────────────────────
-    _s.phase   = "analyzing";
-    _s.message = "Analysing signals across all assets…";
-
-    const best = findBestSignal();
-    _s.asset     = best.asset;
-    _s.direction = best.direction;
-    _s.upScore   = best.upScore;
-    _s.downScore = best.downScore;
-
-    if (best.score < 8) {
-      _s.phase         = "waiting";
-      _s.winConfidence = 0;
-      _s.preTradeIn    = 0;
-      _s.message = `Signal strength ${best.score}/8 on ${best.asset} — need 100% (8/8), scanning again in 10 s`;
-      logger.info({ asset: best.asset, score: best.score }, "CT: signal below 100% threshold, waiting 10s");
+    if (!hasKucoinCredentials()) {
+      _s.phase = "error";
+      _s.message = "Waiting for KuCoin API keys to be configured";
       await sleep(10_000);
       continue;
     }
 
-    // ── Phase: Pre-trade — show signal to user for 5 s before firing ────
-    const confidence = 100;
-    _s.phase         = "pre-trade";
-    _s.winConfidence = confidence;
-    _s.preTradeIn    = 5;
-    _s.message       = `${confidence}% signal found — ${best.direction} on ${best.asset} · firing in 5 s`;
-    logger.info({ asset: best.asset, dir: best.direction, score: best.score, confidence }, "CT: pre-trade preview");
+    const account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
+    const tradePercent = Math.min(100, Math.max(1, parseFloat((account?.tradePercentage as string) ?? "50")));
+    _s.tradePercent = tradePercent;
 
-    for (let t = 4; t >= 0; t--) {
-      await sleep(1_000);
-      _s.preTradeIn = t;
-      _s.message    = `${confidence}% signal found — ${best.direction} on ${best.asset} · firing in ${t} s`;
-      // Allow stop mid-preview
-      const chk = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
-      if (!chk?.autoInvestEnabled) {
-        _s.active = false; _s.phase = "idle"; _s.message = "Stopped";
-        _loopRunning = false;
-        return;
-      }
-    }
+    // ── Scan ─────────────────────────────────────────────────────────────
+    _s.phase = "analyzing";
+    _s.message = "Scanning BTC-USDT / ETH-USDT for a perfect signal…";
 
-    // ── Phase: Trade ────────────────────────────────────────────────────
-    // Re-fetch balance just before placing so stake reflects latest balance (post-prior wins)
-    const freshAccount = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
-    const freshBalance = parseFloat(freshAccount?.balance as string ?? "0");
-    const freshStake   = Math.max(1, parseFloat((freshBalance * tradePercent / 100).toFixed(2)));
-    if (freshBalance < 1) {
-      _s.phase   = "waiting";
-      _s.message = "Balance too low — please deposit funds";
-      await sleep(30_000);
+    let best: { asset: string; score: number } | null;
+    try {
+      best = await findBestSignal();
+    } catch (e) {
+      logger.error(e, "CT: scan failed");
+      _s.phase = "error"; _s.message = "Scan failed, retrying…";
+      await sleep(SCAN_INTERVAL_MS);
       continue;
     }
 
-    // Use freshStake — balance at moment of trade so profit compounds
-    const stake = freshStake;
-    _s.stake = freshStake;
+    if (!best || best.score < 8) {
+      _s.asset = best?.asset ?? "—";
+      _s.upScore = best?.score ?? 0;
+      _s.direction = null;
+      _s.phase = "waiting";
+      _s.message = `Signal ${best?.score ?? 0}/8 on ${best?.asset ?? "—"} — need 8/8, scanning again`;
+      await sleep(SCAN_INTERVAL_MS);
+      continue;
+    }
 
-    const entryPrice = getLivePrice(best.asset);
-    const duration   = 60;
+    _s.asset = best.asset;
+    _s.upScore = best.score;
+    _s.direction = "UP";
 
-    _s.phase         = "trading";
-    _s.countdown     = duration;
-    _s.preTradeIn    = 0;
-    _s.message       = `Trading ${best.direction} on ${best.asset} — ${confidence}% win confidence`;
+    // ── Balance check (real KuCoin USDT) ────────────────────────────────
+    let freeUsdt: number;
+    try {
+      freeUsdt = await getFreeBalance("USDT");
+    } catch (e) {
+      logger.error(e, "CT: failed to fetch KuCoin balance");
+      _s.phase = "error"; _s.message = "Could not read KuCoin balance, retrying…";
+      await sleep(10_000);
+      continue;
+    }
 
-    logger.info({ asset: best.asset, dir: best.direction, score: best.score, stake, tradePercent }, "CT: placing trade");
+    const stake = parseFloat((freeUsdt * tradePercent / 100).toFixed(2));
+    if (stake < MIN_TRADE_USDT) {
+      _s.phase = "waiting";
+      _s.message = `KuCoin USDT balance too low (need at least $${MIN_TRADE_USDT} stake) — deposit more via P2P`;
+      await sleep(15_000);
+      continue;
+    }
+    _s.stake = stake;
 
+    // ── Fire: real market buy ───────────────────────────────────────────
+    _s.phase = "trading";
+    _s.message = `8/8 signal on ${best.asset} — buying $${stake} …`;
+    logger.info({ asset: best.asset, score: best.score, stake }, "CT: placing real market buy");
+
+    let buy;
+    try {
+      buy = await marketBuy(best.asset, stake);
+    } catch (e) {
+      logger.error(e, "CT: buy order failed");
+      _s.phase = "error"; _s.message = `Buy failed: ${(e as Error).message}`;
+      await sleep(10_000);
+      continue;
+    }
+
+    const entryPrice = buy.avgPrice;
     let tradeId: number | null = null;
     try {
       const [trade] = await db.insert(tradesTable).values({
         accountId:  1,
         symbol:     best.asset,
-        direction:  best.direction,
+        direction:  "UP",
         amount:     stake.toFixed(2),
-        duration,
+        duration:   Math.round(TRADE_WINDOW_MS / 1000),
         entryPrice: entryPrice.toString(),
         payout:     "100",
         status:     "OPEN",
         isAuto:     true,
         isDemo:     false,
+        buyOrderId: buy.orderId,
       }).returning();
       tradeId = trade.id;
     } catch (e) {
-      logger.error(e, "CT: failed to insert trade");
-      await sleep(5_000);
+      logger.error(e, "CT: failed to record trade — position is still open on KuCoin!");
+    }
+
+    // ── Monitor window: exit on signal reversal, take-profit, or stop-loss ──
+    const startTs = Date.now();
+    let exitReason: "signal_reversed" | "take_profit" | "stop_loss" | "window_expired" = "window_expired";
+
+    while (Date.now() - startTs < TRADE_WINDOW_MS) {
+      await sleep(CHECK_INTERVAL_MS);
+      let price: number;
+      let score: number;
+      try {
+        [price, score] = await Promise.all([
+          getPrice(best.asset),
+          getKlines(best.asset, 30).then(scoreUp),
+        ]);
+      } catch (e) {
+        logger.warn(e, "CT: mid-trade check failed, holding");
+        continue;
+      }
+
+      const change = (price - entryPrice) / entryPrice;
+      _s.message = `Holding ${best.asset} — ${(change * 100).toFixed(2)}% since entry`;
+
+      if (score < 8)                       { exitReason = "signal_reversed"; break; }
+      if (change >= TAKE_PROFIT_PCT)        { exitReason = "take_profit"; break; }
+      if (change <= -STOP_LOSS_PCT)         { exitReason = "stop_loss"; break; }
+
+      if (!(await isEnabled())) { exitReason = "signal_reversed"; break; } // user hit stop — exit immediately
+    }
+
+    // ── Exit: real market sell ──────────────────────────────────────────
+    _s.message = `Exiting ${best.asset} (${exitReason})…`;
+    let sell;
+    try {
+      sell = await marketSell(best.asset, buy.dealSize);
+    } catch (e) {
+      logger.error(e, "CT: SELL FAILED — position remains open on KuCoin, needs manual attention");
+      _s.phase = "error";
+      _s.message = `Sell failed — check KuCoin manually: ${(e as Error).message}`;
+      await sleep(10_000);
       continue;
     }
 
-    // Countdown
-    for (let t = duration - 1; t >= 0; t--) {
-      await sleep(1_000);
-      _s.countdown = t;
-      // Abort if stopped mid-trade
-      const chk = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
-      if (!chk?.autoInvestEnabled) {
-        if (tradeId) {
-          const exitP = getLivePrice(best.asset);
-          await db.update(tradesTable)
-            .set({ exitPrice: exitP.toString(), profit: (-stake).toFixed(2), status: "LOSS", closedAt: new Date() })
-            .where(eq(tradesTable.id, tradeId));
-        }
-        _s.active = false; _s.phase = "idle"; _s.message = "Stopped";
-        _loopRunning = false;
-        return;
-      }
-    }
-
-    // ── Resolve trade ───────────────────────────────────────────────────
-    const exitPrice = getLivePrice(best.asset);
-    const prob      = winProb(best.score);
-    const marketWon = best.direction === "UP" ? exitPrice >= entryPrice : exitPrice <= entryPrice;
-    const won = prob >= 1.0
-      ? true
-      : (Math.random() < prob
-          ? (marketWon ? true : Math.random() < (prob - 0.5))
-          : false);
-
-    const profit = won ? stake : -stake;
-    const status = won ? "WIN" : "LOSS";
+    const buyCostUsdt     = buy.feeCurrency === "USDT" ? buy.dealFunds + buy.fee : buy.dealFunds;
+    const sellProceedsUsdt = sell.feeCurrency === "USDT" ? sell.dealFunds - sell.fee : sell.dealFunds;
+    const profit = parseFloat((sellProceedsUsdt - buyCostUsdt).toFixed(4));
+    const status = profit > 0 ? "WIN" : profit < 0 ? "LOSS" : "DRAW";
+    const won = profit > 0;
 
     if (tradeId) {
       await db.update(tradesTable)
-        .set({ exitPrice: exitPrice.toString(), profit: profit.toFixed(2), status, closedAt: new Date() })
+        .set({
+          exitPrice: sell.avgPrice.toString(),
+          profit: profit.toFixed(4),
+          status,
+          sellOrderId: sell.orderId,
+          exitReason,
+          closedAt: new Date(),
+        })
         .where(eq(tradesTable.id, tradeId));
     }
 
-    // Update account balance
+    // Update account stats (winRate/totalTrades are shared; realizedPnlUsd is the real-money ledger)
     const acc2 = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
-    let newBal = 0;
     if (acc2) {
-      newBal          = Math.max(0, parseFloat(acc2.balance as string) + profit);
-      const newTotal  = acc2.totalTrades + 1;
-      const prevWins  = Math.round(parseFloat(acc2.winRate as string) * acc2.totalTrades / 100);
-      const newWinRate = ((prevWins + (won ? 1 : 0)) / newTotal) * 100;
+      const newTotal    = acc2.totalTrades + 1;
+      const prevWins    = Math.round(parseFloat(acc2.winRate as string) * acc2.totalTrades / 100);
+      const newWinRate  = ((prevWins + (won ? 1 : 0)) / newTotal) * 100;
+      const newPnl      = parseFloat((parseFloat(acc2.realizedPnlUsd as string) + profit).toFixed(4));
       await db.update(accountsTable).set({
-        balance:     newBal.toFixed(2),
-        totalTrades: newTotal,
-        winRate:     newWinRate.toFixed(2),
-        totalProfit: (parseFloat(acc2.totalProfit as string) + profit).toFixed(2),
+        totalTrades:    newTotal,
+        winRate:        newWinRate.toFixed(2),
+        realizedPnlUsd: newPnl.toFixed(4),
       }).where(eq(accountsTable.id, 1));
     }
 
-    _s.lastResult    = status;
-    _s.lastProfit    = profit;
+    _s.lastResult = status as "WIN" | "LOSS" | "DRAW";
+    _s.lastProfit = profit;
     _s.sessionTrades++;
     if (won) _s.sessionWins++;
     _s.sessionProfit += profit;
-    _s.message = `${won ? "✓ WON" : "✗ LOST"} ${won ? "+" : ""}GHS ${profit.toFixed(2)} on ${best.asset} ${best.direction}`;
-    _s.countdown = 0;
+    _s.phase = "waiting";
+    _s.message = `${won ? "✓ WON" : profit < 0 ? "✗ LOST" : "= FLAT"} ${profit >= 0 ? "+" : ""}$${profit.toFixed(2)} on ${best.asset} (${exitReason})`;
 
-    logger.info({ asset: best.asset, dir: best.direction, status, profit: profit.toFixed(2) }, "CT: trade closed");
+    logger.info({ asset: best.asset, status, profit, exitReason }, "CT: real trade closed");
 
-    // Tiny pause before next cycle so stats can be read
-    await sleep(1_500);
+    await sleep(500);
   }
 }
 
@@ -340,7 +326,7 @@ export async function startSession(tradePercentage: number) {
     ..._s,
     active:        true,
     tradePercent:  tradePercentage,
-    stake:         0,   // computed fresh each cycle from live balance
+    stake:         0,
     phase:         "analyzing",
     sessionTrades: 0,
     sessionWins:   0,

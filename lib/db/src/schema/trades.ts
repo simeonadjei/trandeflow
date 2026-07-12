@@ -16,6 +16,10 @@ export const tradesTable = pgTable("trades", {
   status: text("status").notNull().default("OPEN"), // OPEN | WIN | LOSS | DRAW
   isAuto: boolean("is_auto").notNull().default(false),
   isDemo: boolean("is_demo").notNull().default(false),
+  // Real exchange order references (KuCoin) — set only for real trades, null for simulated/demo ones.
+  buyOrderId: text("buy_order_id"),
+  sellOrderId: text("sell_order_id"),
+  exitReason: text("exit_reason"), // signal_reversed | take_profit | stop_loss | null
   createdAt: timestamp("created_at").notNull().defaultNow(),
   closedAt: timestamp("closed_at"),
 });

@@ -1,2 +1,3 @@
 - [Auth system](auth-system.md) — JWT via SESSION_SECRET; admin seeding removed; login with whichever account you registered.
 - [Platform revenue model](platform-revenue.md) — No cut taken from trades; platform_revenue table exists in schema/admin routes but nothing inserts into it from trade logic.
+- [Real trading exchange](real-trading-exchange.md) — Binance/Bybit APIs are geo-blocked (451) from this Replit host; KuCoin/OKX/Coinbase work. Bot uses KuCoin, long-only, real orders.
