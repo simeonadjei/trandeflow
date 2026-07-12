@@ -4,8 +4,9 @@ description: Which crypto exchange APIs are reachable from this Replit host, and
 ---
 
 ## Exchange reachability from this host
-- Binance (`api.binance.com`) and Bybit (`api.bybit.com`) return HTTP 451/403 — geo-blocked at the network level regardless of account/API key validity. Do not attempt Binance/Bybit direct integration from this environment.
-- KuCoin, OKX, and Coinbase public endpoints are reachable (200) from this host. KuCoin was chosen (Ghana P2P MoMo support, zero P2P fees).
+- Binance (`api.binance.com`) and Bybit (`api.bybit.com`) return HTTP 451/403 on *public* endpoints — geo-blocked at the network level regardless of account/API key validity. Do not attempt Binance/Bybit direct integration from this environment.
+- KuCoin's public endpoints (candles, ticker, symbols) are reachable (200), but its **signed/authenticated** endpoints (e.g. `/api/v1/accounts`) return error code `400302` — KuCoin also geo-blocks by the *server's* outbound IP for private calls, independent of the account's own region. This Replit host's outbound IP resolves to the US, which KuCoin restricts. Confirmed with real API key/secret/passphrase — this is a hard network-level block, not an auth or config error.
+- Net effect: no exchange tested so far (Binance, Bybit, KuCoin) supports authenticated/private real-trading calls directly from this Replit host. Public market-data endpoints work on KuCoin/OKX/Coinbase, but placing real signed orders requires an outbound path with a non-restricted IP (e.g. a proxy/VPN with an allowed region, or hosting the trading execution elsewhere).
 
 **Why:** Discovered via direct curl test (451 "restricted location" error) after the user had already created and funded a Binance account — cost real rework. Check reachability with a plain `curl` to the exchange's public ping/time endpoint *before* committing a user to an exchange signup flow.
 
