@@ -3,7 +3,7 @@ import { db } from "@workspace/db";
 import { accountsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { startSession, stopSession, getSessionStatus } from "../lib/continuousTrader";
-import { hasKucoinCredentials, getFreeBalance } from "../lib/kucoinClient";
+import { hasCoinbaseCredentials, getFreeBalance } from "../lib/coinbaseClient";
 
 const router = Router();
 
@@ -23,15 +23,15 @@ router.get("/account", async (req, res) => {
       account = created;
     }
 
-    // Real trading balance lives on KuCoin (funded independently via P2P), separate
-    // from the GHS `balance` field which only tracks Paystack deposits/withdrawals.
-    let kucoinBalanceUsd: number | null = null;
-    let kucoinConnected = hasKucoinCredentials();
-    if (kucoinConnected) {
+    // Real trading balance lives on Coinbase (funded independently via card),
+    // separate from the GHS `balance` field which only tracks Paystack deposits/withdrawals.
+    let coinbaseBalanceUsd: number | null = null;
+    let coinbaseConnected = hasCoinbaseCredentials();
+    if (coinbaseConnected) {
       try {
-        kucoinBalanceUsd = await getFreeBalance("USDT");
+        coinbaseBalanceUsd = await getFreeBalance("USD");
       } catch (err) {
-        req.log.warn(err, "Failed to fetch KuCoin balance");
+        req.log.warn(err, "Failed to fetch Coinbase balance");
       }
     }
 
@@ -46,8 +46,8 @@ router.get("/account", async (req, res) => {
       totalTrades: account.totalTrades,
       winRate: parseFloat(account.winRate as string),
       realizedPnlUsd: parseFloat(account.realizedPnlUsd as string),
-      kucoinConnected,
-      kucoinBalanceUsd,
+      coinbaseConnected,
+      coinbaseBalanceUsd,
     });
   } catch (err) {
     req.log.error(err);
@@ -74,30 +74,30 @@ router.get("/account/stats", async (req, res) => {
   }
 });
 
-// ── Continuous trading session (real KuCoin execution) ──────────────────────
+// ── Continuous trading session (real Coinbase execution) ────────────────────
 const MIN_TRADE_BALANCE_USD = 5;
 
 router.post("/session/start", async (req, res) => {
   try {
-    if (!hasKucoinCredentials()) {
+    if (!hasCoinbaseCredentials()) {
       return res.status(400).json({
-        error: "kucoin_not_connected",
-        message: "Connect your KuCoin API key, secret, and passphrase before starting the bot.",
+        error: "coinbase_not_connected",
+        message: "Connect your Coinbase API key name and private key before starting the bot.",
       });
     }
 
-    // Hard block: real KuCoin USDT balance must be at least the minimum stake
+    // Hard block: real Coinbase USD balance must be at least the minimum stake
     let balance = 0;
     try {
-      balance = await getFreeBalance("USDT");
+      balance = await getFreeBalance("USD");
     } catch (err) {
-      req.log.error(err, "Failed to fetch KuCoin balance for session start check");
-      return res.status(502).json({ error: "kucoin_unreachable", message: "Could not reach KuCoin to check your balance. Try again shortly." });
+      req.log.error(err, "Failed to fetch Coinbase balance for session start check");
+      return res.status(502).json({ error: "coinbase_unreachable", message: "Could not reach Coinbase to check your balance. Try again shortly." });
     }
     if (balance < MIN_TRADE_BALANCE_USD) {
       return res.status(400).json({
         error: "insufficient_balance",
-        message: `Minimum KuCoin USDT balance to start trading is ${MIN_TRADE_BALANCE_USD.toFixed(2)}. Fund your KuCoin account via P2P first.`,
+        message: `Minimum Coinbase USD balance to start trading is ${MIN_TRADE_BALANCE_USD.toFixed(2)}. Fund your Coinbase account via card first.`,
         currentBalance: balance,
         minimumRequired: MIN_TRADE_BALANCE_USD,
       });

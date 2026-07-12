@@ -1,10 +1,10 @@
 /**
- * Continuous Trading Engine — REAL KuCoin execution
+ * Continuous Trading Engine — REAL Coinbase execution
  * ──────────────────────────────────────────────────
  * Runs server-side forever until stopped.
- * Scans BTC-USDT / ETH-USDT for a perfect 8/8 bullish (UP-only) signal.
- * On a perfect signal it places a REAL market buy on KuCoin sized as a
- * percentage of the user's real free USDT balance, watches it for up to
+ * Scans BTC-USD / ETH-USD for a perfect 8/8 bullish (UP-only) signal.
+ * On a perfect signal it places a REAL market buy on Coinbase sized as a
+ * percentage of the user's real free USD balance, watches it for up to
  * a short window, and exits (real market sell) the instant the signal
  * reverses, a take-profit hits, or a stop-loss hits — whichever comes first.
  *
@@ -17,15 +17,15 @@ import { accountsTable, tradesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { logger } from "./logger";
 import {
-  hasKucoinCredentials, getFreeBalance, getKlines, getPrice,
+  hasCoinbaseCredentials, getFreeBalance, getKlines, getPrice,
   marketBuy, marketSell, type Candle,
-} from "./kucoinClient";
+} from "./coinbaseClient";
 
 // ─── Session status ───────────────────────────────────────────────────────
 export interface SessionStatus {
   active:          boolean;
   stake:           number;
-  tradePercent:    number;   // % of real USDT balance used as stake each trade
+  tradePercent:    number;   // % of real USD balance used as stake each trade
   phase:           "idle" | "analyzing" | "trading" | "waiting" | "error";
   asset:           string;
   direction:       "UP" | null;
@@ -88,8 +88,8 @@ function scoreUp(candles: Candle[]): number {
   ].filter(Boolean).length;
 }
 
-// ─── Assets — real KuCoin spot pairs only ────────────────────────────────
-const ASSETS = ["BTC-USDT", "ETH-USDT"];
+// ─── Assets — real Coinbase spot pairs only ──────────────────────────────
+const ASSETS = ["BTC-USD", "ETH-USD"];
 
 async function findBestSignal(): Promise<{ asset: string; score: number } | null> {
   let best: { asset: string; score: number } | null = null;
@@ -111,7 +111,7 @@ const TRADE_WINDOW_MS   = 5_000;   // max time to hold before forced exit
 const CHECK_INTERVAL_MS = 1_000;   // how often we re-check signal/price mid-trade
 const TAKE_PROFIT_PCT   = 0.004;   // +0.4%
 const STOP_LOSS_PCT     = 0.003;   // -0.3%
-const MIN_TRADE_USDT    = 5;       // floor so fees don't eat the trade
+const MIN_TRADE_USD     = 5;       // floor so fees don't eat the trade
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
@@ -132,9 +132,9 @@ async function loop() {
       return;
     }
 
-    if (!hasKucoinCredentials()) {
+    if (!hasCoinbaseCredentials()) {
       _s.phase = "error";
-      _s.message = "Waiting for KuCoin API keys to be configured";
+      _s.message = "Waiting for Coinbase API keys to be configured";
       await sleep(10_000);
       continue;
     }
@@ -145,7 +145,7 @@ async function loop() {
 
     // ── Scan ─────────────────────────────────────────────────────────────
     _s.phase = "analyzing";
-    _s.message = "Scanning BTC-USDT / ETH-USDT for a perfect signal…";
+    _s.message = "Scanning BTC-USD / ETH-USD for a perfect signal…";
 
     let best: { asset: string; score: number } | null;
     try {
@@ -171,21 +171,21 @@ async function loop() {
     _s.upScore = best.score;
     _s.direction = "UP";
 
-    // ── Balance check (real KuCoin USDT) ────────────────────────────────
-    let freeUsdt: number;
+    // ── Balance check (real Coinbase USD) ───────────────────────────────
+    let freeUsd: number;
     try {
-      freeUsdt = await getFreeBalance("USDT");
+      freeUsd = await getFreeBalance("USD");
     } catch (e) {
-      logger.error(e, "CT: failed to fetch KuCoin balance");
-      _s.phase = "error"; _s.message = "Could not read KuCoin balance, retrying…";
+      logger.error(e, "CT: failed to fetch Coinbase balance");
+      _s.phase = "error"; _s.message = "Could not read Coinbase balance, retrying…";
       await sleep(10_000);
       continue;
     }
 
-    const stake = parseFloat((freeUsdt * tradePercent / 100).toFixed(2));
-    if (stake < MIN_TRADE_USDT) {
+    const stake = parseFloat((freeUsd * tradePercent / 100).toFixed(2));
+    if (stake < MIN_TRADE_USD) {
       _s.phase = "waiting";
-      _s.message = `KuCoin USDT balance too low (need at least $${MIN_TRADE_USDT} stake) — deposit more via P2P`;
+      _s.message = `Coinbase USD balance too low (need at least ${MIN_TRADE_USD} stake) — deposit more via card`;
       await sleep(15_000);
       continue;
     }
@@ -224,7 +224,7 @@ async function loop() {
       }).returning();
       tradeId = trade.id;
     } catch (e) {
-      logger.error(e, "CT: failed to record trade — position is still open on KuCoin!");
+      logger.error(e, "CT: failed to record trade — position is still open on Coinbase!");
     }
 
     // ── Monitor window: exit on signal reversal, take-profit, or stop-loss ──
@@ -261,16 +261,16 @@ async function loop() {
     try {
       sell = await marketSell(best.asset, buy.dealSize);
     } catch (e) {
-      logger.error(e, "CT: SELL FAILED — position remains open on KuCoin, needs manual attention");
+      logger.error(e, "CT: SELL FAILED — position remains open on Coinbase, needs manual attention");
       _s.phase = "error";
-      _s.message = `Sell failed — check KuCoin manually: ${(e as Error).message}`;
+      _s.message = `Sell failed — check Coinbase manually: ${(e as Error).message}`;
       await sleep(10_000);
       continue;
     }
 
-    const buyCostUsdt     = buy.feeCurrency === "USDT" ? buy.dealFunds + buy.fee : buy.dealFunds;
-    const sellProceedsUsdt = sell.feeCurrency === "USDT" ? sell.dealFunds - sell.fee : sell.dealFunds;
-    const profit = parseFloat((sellProceedsUsdt - buyCostUsdt).toFixed(4));
+    const buyCostUsd      = buy.feeCurrency === "USD" ? buy.dealFunds + buy.fee : buy.dealFunds;
+    const sellProceedsUsd = sell.feeCurrency === "USD" ? sell.dealFunds - sell.fee : sell.dealFunds;
+    const profit = parseFloat((sellProceedsUsd - buyCostUsd).toFixed(4));
     const status = profit > 0 ? "WIN" : profit < 0 ? "LOSS" : "DRAW";
     const won = profit > 0;
 
