@@ -5,14 +5,12 @@
  * public candles/price, and real market order placement.
  * Docs: https://docs.cdp.coinbase.com/coinbase-app/advanced-trade-apis/
  *
- * Auth uses Coinbase Developer Platform (CDP) API keys: a key "name"
- * (organizations/{org_id}/apiKeys/{key_id}) plus an EC (P-256) private
- * key in PEM format. Each request is authorized with a short-lived
- * ES256 JWT — no HMAC signing like KuCoin/Binance.
+ * Auth uses a legacy-style Advanced Trade "API Key ID + Secret" pair
+ * (HMAC-SHA256 request signing) — the format issued via
+ * Coinbase Developer Platform → Coinbase APIs → Consumer.
  */
 
 import crypto from "node:crypto";
-import jwt from "jsonwebtoken";
 import { logger } from "./logger";
 
 const HOST = "api.coinbase.com";
@@ -20,49 +18,34 @@ const BASE = `https://${HOST}`;
 
 function getCreds() {
   return {
-    keyName: process.env.COINBASE_API_KEY_NAME,
-    // Private keys are stored with literal "\n" sequences in env vars; restore real newlines.
-    privateKey: process.env.COINBASE_API_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+    apiKey: process.env.COINBASE_API_KEY,
+    apiSecret: process.env.COINBASE_API_SECRET,
   };
 }
 
 export function hasCoinbaseCredentials(): boolean {
-  const { keyName, privateKey } = getCreds();
-  return Boolean(keyName && privateKey);
-}
-
-function buildJwt(method: "GET" | "POST", path: string): string {
-  const { keyName, privateKey } = getCreds();
-  if (!keyName || !privateKey) throw new Error("Coinbase API credentials not configured");
-
-  const uri = `${method} ${HOST}${path}`;
-  const payload = {
-    iss: "cdp",
-    nbf: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + 120,
-    sub: keyName,
-    uri,
-  };
-
-  return jwt.sign(payload, privateKey, {
-    algorithm: "ES256",
-    header: {
-      alg: "ES256",
-      kid: keyName,
-      nonce: crypto.randomBytes(16).toString("hex"),
-    } as any,
-  });
+  const { apiKey, apiSecret } = getCreds();
+  return Boolean(apiKey && apiSecret);
 }
 
 async function signedRequest(method: "GET" | "POST", path: string, body?: Record<string, unknown>) {
-  const token = buildJwt(method, path);
+  const { apiKey, apiSecret } = getCreds();
+  if (!apiKey || !apiSecret) throw new Error("Coinbase API credentials not configured");
+
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const bodyStr = body ? JSON.stringify(body) : "";
+  const prehash = timestamp + method + path + bodyStr;
+  const signature = crypto.createHmac("sha256", apiSecret).update(prehash).digest("hex");
+
   const res = await fetch(BASE + path, {
     method,
     headers: {
-      Authorization: `Bearer ${token}`,
+      "CB-ACCESS-KEY": apiKey,
+      "CB-ACCESS-SIGN": signature,
+      "CB-ACCESS-TIMESTAMP": timestamp,
       "Content-Type": "application/json",
     },
-    body: body ? JSON.stringify(body) : undefined,
+    body: method === "POST" ? bodyStr : undefined,
     signal: AbortSignal.timeout(10_000),
   });
 
