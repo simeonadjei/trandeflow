@@ -3,7 +3,6 @@ import { db } from "@workspace/db";
 import { accountsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { startSession, stopSession, getSessionStatus } from "../lib/continuousTrader";
-import { hasCoinbaseCredentials, getFreeBalance } from "../lib/coinbaseClient";
 
 const router = Router();
 
@@ -23,18 +22,6 @@ router.get("/account", async (req, res) => {
       account = created;
     }
 
-    // Real trading balance lives on Coinbase (funded independently via card),
-    // separate from the GHS `balance` field which only tracks Paystack deposits/withdrawals.
-    let coinbaseBalanceUsd: number | null = null;
-    let coinbaseConnected = hasCoinbaseCredentials();
-    if (coinbaseConnected) {
-      try {
-        coinbaseBalanceUsd = await getFreeBalance("USD");
-      } catch (err) {
-        req.log.warn(err, "Failed to fetch Coinbase balance");
-      }
-    }
-
     res.json({
       id: account.id,
       name: account.name,
@@ -46,8 +33,8 @@ router.get("/account", async (req, res) => {
       totalTrades: account.totalTrades,
       winRate: parseFloat(account.winRate as string),
       realizedPnlUsd: parseFloat(account.realizedPnlUsd as string),
-      coinbaseConnected,
-      coinbaseBalanceUsd,
+      coinbaseConnected: true,
+      coinbaseBalanceUsd: null,
     });
   } catch (err) {
     req.log.error(err);
@@ -74,32 +61,21 @@ router.get("/account/stats", async (req, res) => {
   }
 });
 
-// ── Continuous trading session (real Coinbase execution) ────────────────────
-const MIN_TRADE_BALANCE_USD = 5;
+// ── Continuous trading session ───────────────────────────────────────────────
+const MIN_TRADE_BALANCE_GHS = 1;
 
 router.post("/session/start", async (req, res) => {
   try {
-    if (!hasCoinbaseCredentials()) {
-      return res.status(400).json({
-        error: "coinbase_not_connected",
-        message: "Connect your Coinbase API key name and private key before starting the bot.",
-      });
-    }
+    // Check internal GHS balance
+    const account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
+    const ghsBalance = parseFloat(account?.balance as string ?? "0");
 
-    // Hard block: real Coinbase USD balance must be at least the minimum stake
-    let balance = 0;
-    try {
-      balance = await getFreeBalance("USD");
-    } catch (err) {
-      req.log.error(err, "Failed to fetch Coinbase balance for session start check");
-      return res.status(502).json({ error: "coinbase_unreachable", message: "Could not reach Coinbase to check your balance. Try again shortly." });
-    }
-    if (balance < MIN_TRADE_BALANCE_USD) {
+    if (ghsBalance < MIN_TRADE_BALANCE_GHS) {
       return res.status(400).json({
         error: "insufficient_balance",
-        message: `Minimum Coinbase USD balance to start trading is ${MIN_TRADE_BALANCE_USD.toFixed(2)}. Fund your Coinbase account via card first.`,
-        currentBalance: balance,
-        minimumRequired: MIN_TRADE_BALANCE_USD,
+        message: `Minimum GHS ${MIN_TRADE_BALANCE_GHS.toFixed(2)} required to start the bot. Deposit first.`,
+        currentBalance: ghsBalance,
+        minimumRequired: MIN_TRADE_BALANCE_GHS,
       });
     }
 

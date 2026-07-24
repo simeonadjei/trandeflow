@@ -1,31 +1,26 @@
 /**
- * Continuous Trading Engine — REAL Coinbase execution
- * ──────────────────────────────────────────────────
- * Runs server-side forever until stopped.
- * Scans BTC-USD / ETH-USD for a perfect 8/8 bullish (UP-only) signal.
- * On a perfect signal it places a REAL market buy on Coinbase sized as a
- * percentage of the user's real free USD balance, watches it for up to
- * a short window, and exits (real market sell) the instant the signal
- * reverses, a take-profit hits, or a stop-loss hits — whichever comes first.
+ * Continuous Trading Engine — Real market prices, internal GHS balance
+ * ─────────────────────────────────────────────────────────────────────
+ * Scans BTC-USD / ETH-USD via Coinbase public API (no auth needed).
+ * On a 6/8+ bullish signal it places a trade against the user's
+ * internal GHS balance, holds for up to 30 seconds, then resolves
+ * based on actual price movement.
  *
- * There is no guaranteed outcome. Every trade is a real order against real
- * market prices; wins and losses both happen.
+ * Balance is deducted immediately at trade open and refunded/settled
+ * at close.
  */
 
 import { db } from "@workspace/db";
 import { accountsTable, tradesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { logger } from "./logger";
-import {
-  hasCoinbaseCredentials, getFreeBalance, getKlines, getPrice,
-  marketBuy, marketSell, type Candle,
-} from "./coinbaseClient";
+import { getKlines, getPrice, type Candle } from "./coinbaseClient";
 
 // ─── Session status ───────────────────────────────────────────────────────
 export interface SessionStatus {
   active:          boolean;
   stake:           number;
-  tradePercent:    number;   // % of real USD balance used as stake each trade
+  tradePercent:    number;
   phase:           "idle" | "analyzing" | "trading" | "waiting" | "error";
   asset:           string;
   direction:       "UP" | null;
@@ -60,12 +55,12 @@ function calcRSI(candles: Candle[], period = 14): number {
   return Math.round(100 - 100 / (1 + gains / losses));
 }
 
-// ─── 8-condition UP-only scorer (long-only: real spot can't short) ───────
+// ─── 8-condition UP scorer ──────────────────────────────────────────────
 function scoreUp(candles: Candle[]): number {
   if (candles.length < 12) return 0;
-  const last  = candles[candles.length - 1];
-  const prev  = candles[candles.length - 2];
-  const prev2 = candles[candles.length - 3];
+  const last   = candles[candles.length - 1];
+  const prev   = candles[candles.length - 2];
+  const prev2  = candles[candles.length - 3];
   const recent = candles.slice(-5);
 
   const rsi      = calcRSI(candles);
@@ -77,19 +72,20 @@ function scoreUp(candles: Candle[]): number {
   const greenCnt = recent.filter(c => c.close > c.open).length;
 
   return [
-    rsi <= 45,                      // 1. RSI not overbought
-    last.close > last.open,         // 2. Bullish candle
-    greenCnt >= 3,                  // 3. 3 of last 5 candles green
-    bodyLast >= bodyPrev * 0.75,    // 4. Body size maintained
-    wickDown >= wickUp * 0.8,       // 5. Buying pressure
-    last.close > sma10,             // 6. Price above SMA10
-    last.low  >= prev.low * 0.9998, // 7. Higher low
-    prev.low  >= prev2.low * 0.9998,// 8. Sustained higher lows
+    rsi <= 55,                       // 1. RSI not overbought (relaxed from 45 → 55)
+    last.close > last.open,          // 2. Bullish candle
+    greenCnt >= 3,                   // 3. 3 of last 5 candles green
+    bodyLast >= bodyPrev * 0.5,      // 4. Body size maintained (relaxed from 0.75 → 0.5)
+    wickDown >= wickUp * 0.5,        // 5. Buying pressure (relaxed from 0.8 → 0.5)
+    last.close > sma10,              // 6. Price above SMA10
+    last.low  >= prev.low  * 0.999,  // 7. Higher low (relaxed from 0.9998 → 0.999)
+    prev.low  >= prev2.low * 0.999,  // 8. Sustained higher lows
   ].filter(Boolean).length;
 }
 
-// ─── Assets — real Coinbase spot pairs only ──────────────────────────────
+// ─── Assets — Coinbase public pairs ──────────────────────────────────────
 const ASSETS = ["BTC-USD", "ETH-USD"];
+const MIN_SCORE = 6; // require 6/8 (strict but realistic)
 
 async function findBestSignal(): Promise<{ asset: string; score: number } | null> {
   let best: { asset: string; score: number } | null = null;
@@ -99,19 +95,19 @@ async function findBestSignal(): Promise<{ asset: string; score: number } | null
       const score = scoreUp(candles);
       if (!best || score > best.score) best = { asset, score };
     } catch (e) {
-      logger.warn({ asset, err: (e as Error).message }, "CT: klines fetch failed, skipping asset this scan");
+      logger.warn({ asset, err: (e as Error).message }, "CT: klines fetch failed, skipping asset");
     }
   }
   return best;
 }
 
 // ─── Tunables ─────────────────────────────────────────────────────────────
-const SCAN_INTERVAL_MS  = 3_000;
-const TRADE_WINDOW_MS   = 5_000;   // max time to hold before forced exit
-const CHECK_INTERVAL_MS = 1_000;   // how often we re-check signal/price mid-trade
-const TAKE_PROFIT_PCT   = 0.004;   // +0.4%
+const SCAN_INTERVAL_MS  = 5_000;
+const TRADE_WINDOW_MS   = 30_000;  // hold up to 30 seconds
+const CHECK_INTERVAL_MS = 2_000;
+const TAKE_PROFIT_PCT   = 0.003;   // +0.3%
 const STOP_LOSS_PCT     = 0.003;   // -0.3%
-const MIN_TRADE_USD     = 5;       // floor so fees don't eat the trade
+const MIN_BALANCE_GHS   = 1;       // minimum GHS balance to trade
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
@@ -132,20 +128,14 @@ async function loop() {
       return;
     }
 
-    if (!hasCoinbaseCredentials()) {
-      _s.phase = "error";
-      _s.message = "Waiting for Coinbase API keys to be configured";
-      await sleep(10_000);
-      continue;
-    }
-
     const account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
     const tradePercent = Math.min(100, Math.max(1, parseFloat((account?.tradePercentage as string) ?? "50")));
+    const ghsBalance = parseFloat(account?.balance as string ?? "0");
     _s.tradePercent = tradePercent;
 
     // ── Scan ─────────────────────────────────────────────────────────────
     _s.phase = "analyzing";
-    _s.message = "Scanning BTC-USD / ETH-USD for a perfect signal…";
+    _s.message = "Scanning BTC-USD / ETH-USD for a signal…";
 
     let best: { asset: string; score: number } | null;
     try {
@@ -157,56 +147,69 @@ async function loop() {
       continue;
     }
 
-    if (!best || best.score < 8) {
-      _s.asset = best?.asset ?? "—";
+    if (!best || best.score < MIN_SCORE) {
+      _s.asset   = best?.asset ?? "—";
       _s.upScore = best?.score ?? 0;
       _s.direction = null;
-      _s.phase = "waiting";
-      _s.message = `Signal ${best?.score ?? 0}/8 on ${best?.asset ?? "—"} — need 8/8, scanning again`;
+      _s.phase   = "waiting";
+      _s.message = `Signal ${best?.score ?? 0}/8 on ${best?.asset ?? "—"} — need ${MIN_SCORE}/8, scanning again…`;
       await sleep(SCAN_INTERVAL_MS);
       continue;
     }
 
-    _s.asset = best.asset;
+    _s.asset   = best.asset;
     _s.upScore = best.score;
     _s.direction = "UP";
 
-    // ── Balance check (real Coinbase USD) ───────────────────────────────
-    let freeUsd: number;
-    try {
-      freeUsd = await getFreeBalance("USD");
-    } catch (e) {
-      logger.error(e, "CT: failed to fetch Coinbase balance");
-      _s.phase = "error"; _s.message = "Could not read Coinbase balance, retrying…";
-      await sleep(10_000);
+    // ── Balance check (internal GHS) ────────────────────────────────────
+    if (ghsBalance < MIN_BALANCE_GHS) {
+      _s.phase   = "waiting";
+      _s.message = `GHS balance too low (GHS ${ghsBalance.toFixed(2)}) — deposit more to trade`;
+      await sleep(15_000);
       continue;
     }
 
-    const stake = parseFloat((freeUsd * tradePercent / 100).toFixed(2));
-    if (stake < MIN_TRADE_USD) {
-      _s.phase = "waiting";
-      _s.message = `Coinbase USD balance too low (need at least ${MIN_TRADE_USD} stake) — deposit more via card`;
-      await sleep(15_000);
+    const stake = parseFloat((ghsBalance * tradePercent / 100).toFixed(2));
+    if (stake < 0.01) {
+      _s.phase   = "waiting";
+      _s.message = "Stake too small, increase balance or trade %";
+      await sleep(10_000);
       continue;
     }
     _s.stake = stake;
 
-    // ── Fire: real market buy ───────────────────────────────────────────
-    _s.phase = "trading";
-    _s.message = `8/8 signal on ${best.asset} — buying $${stake} …`;
-    logger.info({ asset: best.asset, score: best.score, stake }, "CT: placing real market buy");
+    // ── Deduct stake from balance immediately ────────────────────────────
+    const balanceBefore = parseFloat((await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) }))?.balance as string ?? "0");
+    if (balanceBefore < stake) {
+      _s.phase   = "waiting";
+      _s.message = "Insufficient balance for this stake";
+      await sleep(5_000);
+      continue;
+    }
+    await db.update(accountsTable)
+      .set({ balance: (balanceBefore - stake).toFixed(2) })
+      .where(eq(accountsTable.id, 1));
 
-    let buy;
+    // ── Get real entry price ─────────────────────────────────────────────
+    let entryPrice: number;
     try {
-      buy = await marketBuy(best.asset, stake);
+      entryPrice = await getPrice(best.asset);
     } catch (e) {
-      logger.error(e, "CT: buy order failed");
-      _s.phase = "error"; _s.message = `Buy failed: ${(e as Error).message}`;
+      logger.error(e, "CT: failed to get entry price — refunding stake");
+      // Refund
+      await db.update(accountsTable)
+        .set({ balance: balanceBefore.toFixed(2) })
+        .where(eq(accountsTable.id, 1));
+      _s.phase = "error"; _s.message = "Could not read market price, retrying…";
       await sleep(10_000);
       continue;
     }
 
-    const entryPrice = buy.avgPrice;
+    _s.phase   = "trading";
+    _s.message = `${best.score}/8 signal on ${best.asset} — trading GHS ${stake.toFixed(2)} at ${entryPrice.toFixed(2)}…`;
+    logger.info({ asset: best.asset, score: best.score, stake, entryPrice }, "CT: trade opened");
+
+    // ── Record trade in DB ───────────────────────────────────────────────
     let tradeId: number | null = null;
     try {
       const [trade] = await db.insert(tradesTable).values({
@@ -220,16 +223,16 @@ async function loop() {
         status:     "OPEN",
         isAuto:     true,
         isDemo:     false,
-        buyOrderId: buy.orderId,
       }).returning();
       tradeId = trade.id;
     } catch (e) {
-      logger.error(e, "CT: failed to record trade — position is still open on Coinbase!");
+      logger.error(e, "CT: failed to record trade in DB");
     }
 
-    // ── Monitor window: exit on signal reversal, take-profit, or stop-loss ──
+    // ── Monitor window ───────────────────────────────────────────────────
     const startTs = Date.now();
     let exitReason: "signal_reversed" | "take_profit" | "stop_loss" | "window_expired" = "window_expired";
+    let exitPrice = entryPrice;
 
     while (Date.now() - startTs < TRADE_WINDOW_MS) {
       await sleep(CHECK_INTERVAL_MS);
@@ -240,77 +243,71 @@ async function loop() {
           getPrice(best.asset),
           getKlines(best.asset, 30).then(scoreUp),
         ]);
+        exitPrice = price;
       } catch (e) {
         logger.warn(e, "CT: mid-trade check failed, holding");
         continue;
       }
 
       const change = (price - entryPrice) / entryPrice;
-      _s.message = `Holding ${best.asset} — ${(change * 100).toFixed(2)}% since entry`;
+      _s.message = `Holding ${best.asset} — ${(change * 100).toFixed(3)}% since entry`;
 
-      if (score < 8)                       { exitReason = "signal_reversed"; break; }
-      if (change >= TAKE_PROFIT_PCT)        { exitReason = "take_profit"; break; }
-      if (change <= -STOP_LOSS_PCT)         { exitReason = "stop_loss"; break; }
-
-      if (!(await isEnabled())) { exitReason = "signal_reversed"; break; } // user hit stop — exit immediately
+      if (score < MIN_SCORE)              { exitReason = "signal_reversed"; exitPrice = price; break; }
+      if (change >= TAKE_PROFIT_PCT)      { exitReason = "take_profit";     exitPrice = price; break; }
+      if (change <= -STOP_LOSS_PCT)       { exitReason = "stop_loss";       exitPrice = price; break; }
+      if (!(await isEnabled()))           { exitReason = "signal_reversed"; break; }
     }
 
-    // ── Exit: real market sell ──────────────────────────────────────────
-    _s.message = `Exiting ${best.asset} (${exitReason})…`;
-    let sell;
-    try {
-      sell = await marketSell(best.asset, buy.dealSize);
-    } catch (e) {
-      logger.error(e, "CT: SELL FAILED — position remains open on Coinbase, needs manual attention");
-      _s.phase = "error";
-      _s.message = `Sell failed — check Coinbase manually: ${(e as Error).message}`;
-      await sleep(10_000);
-      continue;
-    }
+    // ── Settle trade ─────────────────────────────────────────────────────
+    const priceDiff = (exitPrice - entryPrice) / entryPrice;
+    const won       = priceDiff > 0;
+    // On win: return stake + profit equal to stake × |priceDiff| × 100 (capped at 100% gain)
+    // On loss: return stake × (1 - |priceDiff| × 100), minimum 0
+    const profitGhs = won
+      ? parseFloat((stake * Math.min(priceDiff * 100, 1)).toFixed(2))
+      : parseFloat((-stake * Math.min(Math.abs(priceDiff) * 100, 1)).toFixed(2));
+    const returnToBalance = parseFloat((stake + profitGhs).toFixed(2));
+    const status = priceDiff > 0.0001 ? "WIN" : priceDiff < -0.0001 ? "LOSS" : "DRAW";
 
-    const buyCostUsd      = buy.feeCurrency === "USD" ? buy.dealFunds + buy.fee : buy.dealFunds;
-    const sellProceedsUsd = sell.feeCurrency === "USD" ? sell.dealFunds - sell.fee : sell.dealFunds;
-    const profit = parseFloat((sellProceedsUsd - buyCostUsd).toFixed(4));
-    const status = profit > 0 ? "WIN" : profit < 0 ? "LOSS" : "DRAW";
-    const won = profit > 0;
+    // Return stake ± profit to balance
+    const accNow = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
+    const balanceNow = parseFloat(accNow?.balance as string ?? "0");
+    const newBalance = Math.max(0, balanceNow + returnToBalance);
 
     if (tradeId) {
       await db.update(tradesTable)
         .set({
-          exitPrice: sell.avgPrice.toString(),
-          profit: profit.toFixed(4),
+          exitPrice:  exitPrice.toString(),
+          profit:     profitGhs.toFixed(4),
           status,
-          sellOrderId: sell.orderId,
           exitReason,
-          closedAt: new Date(),
+          closedAt:   new Date(),
         })
         .where(eq(tradesTable.id, tradeId));
     }
 
-    // Update account stats (winRate/totalTrades are shared; realizedPnlUsd is the real-money ledger)
-    const acc2 = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
-    if (acc2) {
-      const newTotal    = acc2.totalTrades + 1;
-      const prevWins    = Math.round(parseFloat(acc2.winRate as string) * acc2.totalTrades / 100);
-      const newWinRate  = ((prevWins + (won ? 1 : 0)) / newTotal) * 100;
-      const newPnl      = parseFloat((parseFloat(acc2.realizedPnlUsd as string) + profit).toFixed(4));
-      await db.update(accountsTable).set({
-        totalTrades:    newTotal,
-        winRate:        newWinRate.toFixed(2),
-        realizedPnlUsd: newPnl.toFixed(4),
-      }).where(eq(accountsTable.id, 1));
-    }
+    const newTotal   = (accNow?.totalTrades ?? 0) + 1;
+    const prevWins   = Math.round(parseFloat(accNow?.winRate as string ?? "0") * (accNow?.totalTrades ?? 0) / 100);
+    const newWinRate = ((prevWins + (won ? 1 : 0)) / newTotal) * 100;
+    const newPnl     = parseFloat((parseFloat(accNow?.realizedPnlUsd as string ?? "0") + profitGhs).toFixed(4));
 
-    _s.lastResult = status as "WIN" | "LOSS" | "DRAW";
-    _s.lastProfit = profit;
+    await db.update(accountsTable).set({
+      balance:        newBalance.toFixed(2),
+      totalTrades:    newTotal,
+      winRate:        newWinRate.toFixed(2),
+      totalProfit:    (parseFloat(accNow?.totalProfit as string ?? "0") + profitGhs).toFixed(2),
+      realizedPnlUsd: newPnl.toFixed(4),
+    }).where(eq(accountsTable.id, 1));
+
+    _s.lastResult   = status as "WIN" | "LOSS" | "DRAW";
+    _s.lastProfit   = profitGhs;
     _s.sessionTrades++;
     if (won) _s.sessionWins++;
-    _s.sessionProfit += profit;
-    _s.phase = "waiting";
-    _s.message = `${won ? "✓ WON" : profit < 0 ? "✗ LOST" : "= FLAT"} ${profit >= 0 ? "+" : ""}$${profit.toFixed(2)} on ${best.asset} (${exitReason})`;
+    _s.sessionProfit += profitGhs;
+    _s.phase   = "waiting";
+    _s.message = `${status === "WIN" ? "✓ WON" : status === "LOSS" ? "✗ LOST" : "= FLAT"} ${profitGhs >= 0 ? "+" : ""}GHS ${profitGhs.toFixed(2)} on ${best.asset} (${exitReason})`;
 
-    logger.info({ asset: best.asset, status, profit, exitReason }, "CT: real trade closed");
-
+    logger.info({ asset: best.asset, status, profitGhs, exitReason, newBalance }, "CT: trade closed");
     await sleep(500);
   }
 }
