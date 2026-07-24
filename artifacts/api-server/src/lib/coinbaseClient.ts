@@ -5,47 +5,76 @@
  * public candles/price, and real market order placement.
  * Docs: https://docs.cdp.coinbase.com/coinbase-app/advanced-trade-apis/
  *
- * Auth uses a legacy-style Advanced Trade "API Key ID + Secret" pair
- * (HMAC-SHA256 request signing) — the format issued via
- * Coinbase Developer Platform → Coinbase APIs → Consumer.
+ * Auth uses a CDP "Secret API Key" (Ed25519 by default): a key ID
+ * (COINBASE_API_KEY) plus a base64-encoded 64-byte Ed25519 secret
+ * (COINBASE_API_SECRET, seed + public key). Each request is authorized
+ * with a short-lived EdDSA JWT signed with that key — no HMAC.
  */
 
-import crypto from "node:crypto";
+import crypto, { type KeyObject } from "node:crypto";
 import { logger } from "./logger";
 
 const HOST = "api.coinbase.com";
 const BASE = `https://${HOST}`;
 
+// Fixed PKCS8 DER prefix for a raw 32-byte Ed25519 seed (RFC 8410).
+const ED25519_PKCS8_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
+
 function getCreds() {
   return {
-    apiKey: process.env.COINBASE_API_KEY,
-    apiSecret: process.env.COINBASE_API_SECRET,
+    keyId: process.env.COINBASE_API_KEY,
+    keySecret: process.env.COINBASE_API_SECRET,
   };
 }
 
 export function hasCoinbaseCredentials(): boolean {
-  const { apiKey, apiSecret } = getCreds();
-  return Boolean(apiKey && apiSecret);
+  const { keyId, keySecret } = getCreds();
+  return Boolean(keyId && keySecret);
+}
+
+function base64url(input: Buffer): string {
+  return input.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function loadEd25519PrivateKey(base64Secret: string): KeyObject {
+  const decoded = Buffer.from(base64Secret, "base64");
+  if (decoded.length !== 64) {
+    throw new Error(`Invalid Ed25519 key length: expected 64 bytes, got ${decoded.length}`);
+  }
+  const seed = decoded.subarray(0, 32);
+  const der = Buffer.concat([ED25519_PKCS8_PREFIX, seed]);
+  return crypto.createPrivateKey({ key: der, format: "der", type: "pkcs8" });
+}
+
+function buildJwt(method: "GET" | "POST", path: string): string {
+  const { keyId, keySecret } = getCreds();
+  if (!keyId || !keySecret) throw new Error("Coinbase API credentials not configured");
+
+  const uri = `${method} ${HOST}${path}`;
+  const now = Math.floor(Date.now() / 1000);
+
+  const header = { alg: "EdDSA", typ: "JWT", kid: keyId, nonce: crypto.randomBytes(16).toString("hex") };
+  const payload = { sub: keyId, iss: "cdp", nbf: now, exp: now + 120, uri };
+
+  const encodedHeader = base64url(Buffer.from(JSON.stringify(header)));
+  const encodedPayload = base64url(Buffer.from(JSON.stringify(payload)));
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+
+  const privateKey = loadEd25519PrivateKey(keySecret);
+  const signature = crypto.sign(null, Buffer.from(signingInput), privateKey);
+
+  return `${signingInput}.${base64url(signature)}`;
 }
 
 async function signedRequest(method: "GET" | "POST", path: string, body?: Record<string, unknown>) {
-  const { apiKey, apiSecret } = getCreds();
-  if (!apiKey || !apiSecret) throw new Error("Coinbase API credentials not configured");
-
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-  const bodyStr = body ? JSON.stringify(body) : "";
-  const prehash = timestamp + method + path + bodyStr;
-  const signature = crypto.createHmac("sha256", apiSecret).update(prehash).digest("hex");
-
+  const token = buildJwt(method, path);
   const res = await fetch(BASE + path, {
     method,
     headers: {
-      "CB-ACCESS-KEY": apiKey,
-      "CB-ACCESS-SIGN": signature,
-      "CB-ACCESS-TIMESTAMP": timestamp,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: method === "POST" ? bodyStr : undefined,
+    body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(10_000),
   });
 
