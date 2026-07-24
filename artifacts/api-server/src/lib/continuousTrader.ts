@@ -1,20 +1,23 @@
 /**
- * Continuous Trading Engine — Real market prices, internal GHS balance
- * ─────────────────────────────────────────────────────────────────────
- * Scans BTC-USD / ETH-USD via Coinbase public API (no auth needed).
- * On a 6/8+ bullish signal it places a trade against the user's
- * internal GHS balance, holds for up to 30 seconds, then resolves
- * based on actual price movement.
+ * Continuous Trading Engine — Real MEXC spot execution
+ * ─────────────────────────────────────────────────────
+ * Scans BTCUSDT / ETHUSDT via MEXC public API.
+ * On a 6/8+ bullish signal it places a REAL market buy on MEXC,
+ * monitors the position, and exits (real market sell) when:
+ *   - signal reverses, take-profit hits, stop-loss hits, or window expires.
  *
- * Balance is deducted immediately at trade open and refunded/settled
- * at close.
+ * Stake is taken from the user's live MEXC USDT balance.
+ * Trade results are recorded in the internal DB for history / analytics.
  */
 
 import { db } from "@workspace/db";
 import { accountsTable, tradesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { logger } from "./logger";
-import { getKlines, getPrice, type Candle } from "./coinbaseClient";
+import {
+  hasMexcCredentials, getFreeBalance, getKlines, getPrice,
+  marketBuy, marketSell, type Candle,
+} from "./mexcClient";
 
 // ─── Session status ───────────────────────────────────────────────────────
 export interface SessionStatus {
@@ -43,7 +46,7 @@ let _s: SessionStatus = {
 
 export function getSessionStatus(): SessionStatus { return { ..._s }; }
 
-// ─── RSI ────────────────────────────────────────────────────────────────
+// ─── RSI ─────────────────────────────────────────────────────────────────
 function calcRSI(candles: Candle[], period = 14): number {
   const slice = candles.slice(-(period + 1));
   let gains = 0, losses = 0;
@@ -72,30 +75,31 @@ function scoreUp(candles: Candle[]): number {
   const greenCnt = recent.filter(c => c.close > c.open).length;
 
   return [
-    rsi <= 55,                       // 1. RSI not overbought (relaxed from 45 → 55)
+    rsi <= 55,                       // 1. RSI not overbought
     last.close > last.open,          // 2. Bullish candle
     greenCnt >= 3,                   // 3. 3 of last 5 candles green
-    bodyLast >= bodyPrev * 0.5,      // 4. Body size maintained (relaxed from 0.75 → 0.5)
-    wickDown >= wickUp * 0.5,        // 5. Buying pressure (relaxed from 0.8 → 0.5)
+    bodyLast >= bodyPrev * 0.5,      // 4. Body size maintained
+    wickDown >= wickUp * 0.5,        // 5. Buying pressure
     last.close > sma10,              // 6. Price above SMA10
-    last.low  >= prev.low  * 0.999,  // 7. Higher low (relaxed from 0.9998 → 0.999)
+    last.low  >= prev.low  * 0.999,  // 7. Higher low
     prev.low  >= prev2.low * 0.999,  // 8. Sustained higher lows
   ].filter(Boolean).length;
 }
 
-// ─── Assets — Coinbase public pairs ──────────────────────────────────────
-const ASSETS = ["BTC-USD", "ETH-USD"];
-const MIN_SCORE = 6; // require 6/8 (strict but realistic)
+// ─── MEXC spot pairs ──────────────────────────────────────────────────────
+const ASSETS = ["BTCUSDT", "ETHUSDT"];
+const MIN_SCORE      = 6;      // require 6/8 conditions
+const MIN_STAKE_USDT = 1;      // minimum USDT trade size
 
 async function findBestSignal(): Promise<{ asset: string; score: number } | null> {
   let best: { asset: string; score: number } | null = null;
   for (const asset of ASSETS) {
     try {
       const candles = await getKlines(asset, 30);
-      const score = scoreUp(candles);
+      const score   = scoreUp(candles);
       if (!best || score > best.score) best = { asset, score };
     } catch (e) {
-      logger.warn({ asset, err: (e as Error).message }, "CT: klines fetch failed, skipping asset");
+      logger.warn({ asset, err: (e as Error).message }, "CT: klines fetch failed, skipping");
     }
   }
   return best;
@@ -103,11 +107,10 @@ async function findBestSignal(): Promise<{ asset: string; score: number } | null
 
 // ─── Tunables ─────────────────────────────────────────────────────────────
 const SCAN_INTERVAL_MS  = 5_000;
-const TRADE_WINDOW_MS   = 30_000;  // hold up to 30 seconds
+const TRADE_WINDOW_MS   = 30_000;  // hold up to 30 s
 const CHECK_INTERVAL_MS = 2_000;
-const TAKE_PROFIT_PCT   = 0.003;   // +0.3%
-const STOP_LOSS_PCT     = 0.003;   // -0.3%
-const MIN_BALANCE_GHS   = 1;       // minimum GHS balance to trade
+const TAKE_PROFIT_PCT   = 0.003;   // +0.3 %
+const STOP_LOSS_PCT     = 0.003;   // -0.3 %
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
@@ -128,14 +131,20 @@ async function loop() {
       return;
     }
 
-    const account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
-    const tradePercent = Math.min(100, Math.max(1, parseFloat((account?.tradePercentage as string) ?? "50")));
-    const ghsBalance = parseFloat(account?.balance as string ?? "0");
-    _s.tradePercent = tradePercent;
+    if (!hasMexcCredentials()) {
+      _s.phase   = "error";
+      _s.message = "MEXC API keys not configured";
+      await sleep(10_000);
+      continue;
+    }
 
-    // ── Scan ─────────────────────────────────────────────────────────────
-    _s.phase = "analyzing";
-    _s.message = "Scanning BTC-USD / ETH-USD for a signal…";
+    const account      = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
+    const tradePercent = Math.min(100, Math.max(1, parseFloat((account?.tradePercentage as string) ?? "50")));
+    _s.tradePercent    = tradePercent;
+
+    // ── Scan ──────────────────────────────────────────────────────────────
+    _s.phase   = "analyzing";
+    _s.message = "Scanning BTCUSDT / ETHUSDT on MEXC…";
 
     let best: { asset: string; score: number } | null;
     try {
@@ -148,68 +157,55 @@ async function loop() {
     }
 
     if (!best || best.score < MIN_SCORE) {
-      _s.asset   = best?.asset ?? "—";
-      _s.upScore = best?.score ?? 0;
+      _s.asset     = best?.asset ?? "—";
+      _s.upScore   = best?.score ?? 0;
       _s.direction = null;
-      _s.phase   = "waiting";
-      _s.message = `Signal ${best?.score ?? 0}/8 on ${best?.asset ?? "—"} — need ${MIN_SCORE}/8, scanning again…`;
+      _s.phase     = "waiting";
+      _s.message   = `Signal ${best?.score ?? 0}/8 on ${best?.asset ?? "—"} — need ${MIN_SCORE}/8, scanning again…`;
       await sleep(SCAN_INTERVAL_MS);
       continue;
     }
 
-    _s.asset   = best.asset;
-    _s.upScore = best.score;
+    _s.asset     = best.asset;
+    _s.upScore   = best.score;
     _s.direction = "UP";
 
-    // ── Balance check (internal GHS) ────────────────────────────────────
-    if (ghsBalance < MIN_BALANCE_GHS) {
-      _s.phase   = "waiting";
-      _s.message = `GHS balance too low (GHS ${ghsBalance.toFixed(2)}) — deposit more to trade`;
-      await sleep(15_000);
+    // ── MEXC USDT balance ─────────────────────────────────────────────────
+    let freeUsdt: number;
+    try {
+      freeUsdt = await getFreeBalance("USDT");
+    } catch (e) {
+      logger.error(e, "CT: failed to fetch MEXC balance");
+      _s.phase = "error"; _s.message = `Could not read MEXC balance: ${(e as Error).message}`;
+      await sleep(10_000);
       continue;
     }
 
-    const stake = parseFloat((ghsBalance * tradePercent / 100).toFixed(2));
-    if (stake < 0.01) {
+    const stake = parseFloat((freeUsdt * tradePercent / 100).toFixed(2));
+    if (stake < MIN_STAKE_USDT) {
       _s.phase   = "waiting";
-      _s.message = "Stake too small, increase balance or trade %";
-      await sleep(10_000);
+      _s.message = `MEXC USDT balance too low (${freeUsdt.toFixed(2)} USDT free) — need at least ${MIN_STAKE_USDT} USDT`;
+      await sleep(15_000);
       continue;
     }
     _s.stake = stake;
 
-    // ── Deduct stake from balance immediately ────────────────────────────
-    const balanceBefore = parseFloat((await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) }))?.balance as string ?? "0");
-    if (balanceBefore < stake) {
-      _s.phase   = "waiting";
-      _s.message = "Insufficient balance for this stake";
-      await sleep(5_000);
-      continue;
-    }
-    await db.update(accountsTable)
-      .set({ balance: (balanceBefore - stake).toFixed(2) })
-      .where(eq(accountsTable.id, 1));
+    // ── Real market BUY on MEXC ───────────────────────────────────────────
+    _s.phase   = "trading";
+    _s.message = `${best.score}/8 signal on ${best.asset} — buying ${stake.toFixed(2)} USDT…`;
+    logger.info({ asset: best.asset, score: best.score, stake }, "CT: placing MEXC market buy");
 
-    // ── Get real entry price ─────────────────────────────────────────────
-    let entryPrice: number;
+    let buy;
     try {
-      entryPrice = await getPrice(best.asset);
+      buy = await marketBuy(best.asset, stake);
     } catch (e) {
-      logger.error(e, "CT: failed to get entry price — refunding stake");
-      // Refund
-      await db.update(accountsTable)
-        .set({ balance: balanceBefore.toFixed(2) })
-        .where(eq(accountsTable.id, 1));
-      _s.phase = "error"; _s.message = "Could not read market price, retrying…";
+      logger.error(e, "CT: MEXC buy failed");
+      _s.phase = "error"; _s.message = `Buy failed: ${(e as Error).message}`;
       await sleep(10_000);
       continue;
     }
 
-    _s.phase   = "trading";
-    _s.message = `${best.score}/8 signal on ${best.asset} — trading GHS ${stake.toFixed(2)} at ${entryPrice.toFixed(2)}…`;
-    logger.info({ asset: best.asset, score: best.score, stake, entryPrice }, "CT: trade opened");
-
-    // ── Record trade in DB ───────────────────────────────────────────────
+    const entryPrice = buy.avgPrice;
     let tradeId: number | null = null;
     try {
       const [trade] = await db.insert(tradesTable).values({
@@ -223,16 +219,16 @@ async function loop() {
         status:     "OPEN",
         isAuto:     true,
         isDemo:     false,
+        buyOrderId: buy.orderId,
       }).returning();
       tradeId = trade.id;
     } catch (e) {
-      logger.error(e, "CT: failed to record trade in DB");
+      logger.error(e, "CT: failed to record trade in DB — position still open on MEXC");
     }
 
-    // ── Monitor window ───────────────────────────────────────────────────
+    // ── Monitor window ────────────────────────────────────────────────────
     const startTs = Date.now();
     let exitReason: "signal_reversed" | "take_profit" | "stop_loss" | "window_expired" = "window_expired";
-    let exitPrice = entryPrice;
 
     while (Date.now() - startTs < TRADE_WINDOW_MS) {
       await sleep(CHECK_INTERVAL_MS);
@@ -243,7 +239,6 @@ async function loop() {
           getPrice(best.asset),
           getKlines(best.asset, 30).then(scoreUp),
         ]);
-        exitPrice = price;
       } catch (e) {
         logger.warn(e, "CT: mid-trade check failed, holding");
         continue;
@@ -252,62 +247,68 @@ async function loop() {
       const change = (price - entryPrice) / entryPrice;
       _s.message = `Holding ${best.asset} — ${(change * 100).toFixed(3)}% since entry`;
 
-      if (score < MIN_SCORE)              { exitReason = "signal_reversed"; exitPrice = price; break; }
-      if (change >= TAKE_PROFIT_PCT)      { exitReason = "take_profit";     exitPrice = price; break; }
-      if (change <= -STOP_LOSS_PCT)       { exitReason = "stop_loss";       exitPrice = price; break; }
-      if (!(await isEnabled()))           { exitReason = "signal_reversed"; break; }
+      if (score < MIN_SCORE)         { exitReason = "signal_reversed"; break; }
+      if (change >= TAKE_PROFIT_PCT) { exitReason = "take_profit";     break; }
+      if (change <= -STOP_LOSS_PCT)  { exitReason = "stop_loss";       break; }
+      if (!(await isEnabled()))      { exitReason = "signal_reversed"; break; }
     }
 
-    // ── Settle trade ─────────────────────────────────────────────────────
-    const priceDiff = (exitPrice - entryPrice) / entryPrice;
-    const won       = priceDiff > 0;
-    // On win: return stake + profit equal to stake × |priceDiff| × 100 (capped at 100% gain)
-    // On loss: return stake × (1 - |priceDiff| × 100), minimum 0
-    const profitGhs = won
-      ? parseFloat((stake * Math.min(priceDiff * 100, 1)).toFixed(2))
-      : parseFloat((-stake * Math.min(Math.abs(priceDiff) * 100, 1)).toFixed(2));
-    const returnToBalance = parseFloat((stake + profitGhs).toFixed(2));
-    const status = priceDiff > 0.0001 ? "WIN" : priceDiff < -0.0001 ? "LOSS" : "DRAW";
+    // ── Real market SELL on MEXC ──────────────────────────────────────────
+    _s.message = `Exiting ${best.asset} (${exitReason})…`;
+    let sell;
+    try {
+      sell = await marketSell(best.asset, buy.baseQty);
+    } catch (e) {
+      logger.error(e, "CT: MEXC SELL FAILED — position still open, check MEXC manually");
+      _s.phase   = "error";
+      _s.message = `Sell failed — check MEXC manually: ${(e as Error).message}`;
+      await sleep(10_000);
+      continue;
+    }
 
-    // Return stake ± profit to balance
-    const accNow = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
-    const balanceNow = parseFloat(accNow?.balance as string ?? "0");
-    const newBalance = Math.max(0, balanceNow + returnToBalance);
+    // Profit in USDT
+    const profitUsdt = parseFloat((sell.quoteQty - stake).toFixed(4));
+    const status     = profitUsdt > 0 ? "WIN" : profitUsdt < 0 ? "LOSS" : "DRAW";
+    const won        = profitUsdt > 0;
 
     if (tradeId) {
       await db.update(tradesTable)
         .set({
-          exitPrice:  exitPrice.toString(),
-          profit:     profitGhs.toFixed(4),
+          exitPrice:   sell.avgPrice.toString(),
+          profit:      profitUsdt.toFixed(4),
           status,
+          sellOrderId: sell.orderId,
           exitReason,
-          closedAt:   new Date(),
+          closedAt:    new Date(),
         })
         .where(eq(tradesTable.id, tradeId));
     }
 
-    const newTotal   = (accNow?.totalTrades ?? 0) + 1;
-    const prevWins   = Math.round(parseFloat(accNow?.winRate as string ?? "0") * (accNow?.totalTrades ?? 0) / 100);
-    const newWinRate = ((prevWins + (won ? 1 : 0)) / newTotal) * 100;
-    const newPnl     = parseFloat((parseFloat(accNow?.realizedPnlUsd as string ?? "0") + profitGhs).toFixed(4));
-
-    await db.update(accountsTable).set({
-      balance:        newBalance.toFixed(2),
-      totalTrades:    newTotal,
-      winRate:        newWinRate.toFixed(2),
-      totalProfit:    (parseFloat(accNow?.totalProfit as string ?? "0") + profitGhs).toFixed(2),
-      realizedPnlUsd: newPnl.toFixed(4),
-    }).where(eq(accountsTable.id, 1));
+    // Update internal stats (realizedPnlUsd tracks MEXC USDT profit)
+    const acc2 = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
+    if (acc2) {
+      const newTotal   = acc2.totalTrades + 1;
+      const prevWins   = Math.round(parseFloat(acc2.winRate as string) * acc2.totalTrades / 100);
+      const newWinRate = ((prevWins + (won ? 1 : 0)) / newTotal) * 100;
+      const newPnl     = parseFloat((parseFloat(acc2.realizedPnlUsd as string) + profitUsdt).toFixed(4));
+      const newProfit  = parseFloat((parseFloat(acc2.totalProfit as string) + profitUsdt).toFixed(4));
+      await db.update(accountsTable).set({
+        totalTrades:    newTotal,
+        winRate:        newWinRate.toFixed(2),
+        realizedPnlUsd: newPnl.toFixed(4),
+        totalProfit:    newProfit.toFixed(4),
+      }).where(eq(accountsTable.id, 1));
+    }
 
     _s.lastResult   = status as "WIN" | "LOSS" | "DRAW";
-    _s.lastProfit   = profitGhs;
+    _s.lastProfit   = profitUsdt;
     _s.sessionTrades++;
     if (won) _s.sessionWins++;
-    _s.sessionProfit += profitGhs;
+    _s.sessionProfit += profitUsdt;
     _s.phase   = "waiting";
-    _s.message = `${status === "WIN" ? "✓ WON" : status === "LOSS" ? "✗ LOST" : "= FLAT"} ${profitGhs >= 0 ? "+" : ""}GHS ${profitGhs.toFixed(2)} on ${best.asset} (${exitReason})`;
+    _s.message = `${won ? "✓ WON" : profitUsdt < 0 ? "✗ LOST" : "= FLAT"} ${profitUsdt >= 0 ? "+" : ""}${profitUsdt.toFixed(4)} USDT on ${best.asset} (${exitReason})`;
 
-    logger.info({ asset: best.asset, status, profitGhs, exitReason, newBalance }, "CT: trade closed");
+    logger.info({ asset: best.asset, status, profitUsdt, exitReason }, "CT: MEXC trade closed");
     await sleep(500);
   }
 }
@@ -351,7 +352,7 @@ export async function initContinuousTrader() {
   const account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
   if (account?.autoInvestEnabled) {
     const tradePercent = parseFloat((account.tradePercentage as string) ?? "50");
-    logger.info({ tradePercent }, "CT: auto-resuming active session from DB");
+    logger.info({ tradePercent }, "CT: auto-resuming MEXC session from DB");
     _s.active       = true;
     _s.tradePercent = tradePercent;
     _loopRunning    = true;

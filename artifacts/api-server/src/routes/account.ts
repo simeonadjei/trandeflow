@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { accountsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { startSession, stopSession, getSessionStatus } from "../lib/continuousTrader";
+import { hasMexcCredentials, getFreeBalance } from "../lib/mexcClient";
 
 const router = Router();
 
@@ -22,6 +23,17 @@ router.get("/account", async (req, res) => {
       account = created;
     }
 
+    // Fetch live MEXC USDT balance to show alongside internal balance
+    let mexcBalanceUsdt: number | null = null;
+    const mexcConnected = hasMexcCredentials();
+    if (mexcConnected) {
+      try {
+        mexcBalanceUsdt = await getFreeBalance("USDT");
+      } catch (err) {
+        req.log.warn(err, "Failed to fetch MEXC balance");
+      }
+    }
+
     res.json({
       id: account.id,
       name: account.name,
@@ -33,7 +45,10 @@ router.get("/account", async (req, res) => {
       totalTrades: account.totalTrades,
       winRate: parseFloat(account.winRate as string),
       realizedPnlUsd: parseFloat(account.realizedPnlUsd as string),
-      coinbaseConnected: true,
+      mexcConnected,
+      mexcBalanceUsdt,
+      // kept for backward compat
+      coinbaseConnected: false,
       coinbaseBalanceUsd: null,
     });
   } catch (err) {
@@ -61,21 +76,36 @@ router.get("/account/stats", async (req, res) => {
   }
 });
 
-// ── Continuous trading session ───────────────────────────────────────────────
-const MIN_TRADE_BALANCE_GHS = 1;
+// ── Continuous trading session (MEXC execution) ──────────────────────────────
+const MIN_STAKE_USDT = 1;
 
 router.post("/session/start", async (req, res) => {
   try {
-    // Check internal GHS balance
-    const account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
-    const ghsBalance = parseFloat(account?.balance as string ?? "0");
+    if (!hasMexcCredentials()) {
+      return res.status(400).json({
+        error: "mexc_not_connected",
+        message: "MEXC API keys are not configured. Add MEXC_API_KEY and MEXC_API_SECRET.",
+      });
+    }
 
-    if (ghsBalance < MIN_TRADE_BALANCE_GHS) {
+    // Check live MEXC USDT balance
+    let usdtBalance = 0;
+    try {
+      usdtBalance = await getFreeBalance("USDT");
+    } catch (err) {
+      req.log.error(err, "Failed to fetch MEXC balance");
+      return res.status(502).json({
+        error: "mexc_unreachable",
+        message: `Could not reach MEXC to check your balance: ${(err as Error).message}`,
+      });
+    }
+
+    if (usdtBalance < MIN_STAKE_USDT) {
       return res.status(400).json({
         error: "insufficient_balance",
-        message: `Minimum GHS ${MIN_TRADE_BALANCE_GHS.toFixed(2)} required to start the bot. Deposit first.`,
-        currentBalance: ghsBalance,
-        minimumRequired: MIN_TRADE_BALANCE_GHS,
+        message: `Need at least ${MIN_STAKE_USDT} USDT free on MEXC to start. Current: ${usdtBalance.toFixed(2)} USDT.`,
+        currentBalance: usdtBalance,
+        minimumRequired: MIN_STAKE_USDT,
       });
     }
 
