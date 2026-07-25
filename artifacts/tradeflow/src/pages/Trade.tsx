@@ -4,11 +4,13 @@ import {
   useListAssets, useGetCandles, useAnalyzePattern, useListTrades,
   usePlaceTrade, useGetAccount,
   getListTradesQueryKey, getGetAccountQueryKey,
+  getGetCandlesQueryKey, getAnalyzePatternQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNotifications } from "../lib/useNotifications";
 import { useDemoMode } from "../lib/DemoModeContext";
 import { useAuth } from "../lib/AuthContext";
+import { apiBase } from "../lib/api";
 import { TrendingUp, TrendingDown, ChevronDown, Clock, CheckCircle, XCircle, FlaskConical, Zap, StopCircle, Activity, ArrowUpToLine, ArrowDownToLine, ShieldCheck, ChevronUp, Wallet, RefreshCw } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart, Bar, Line
@@ -146,7 +148,7 @@ export default function Trade() {
   useEffect(() => {
     const poll = async () => {
       try {
-        const data = await fetch("/api/session/status").then(r => r.json());
+        const data = await fetch(`${apiBase}/api/session/status`).then(r => r.json());
         // Detect a newly closed trade by lastResult changing
         const prev = prevSessionRef.current;
         if (
@@ -155,17 +157,13 @@ export default function Trade() {
           data.lastResult
         ) {
           const won = data.lastResult === "WIN";
-          const profit = Math.abs(data.lastProfit ?? 0).toFixed(2);
-          notify(
-            won ? "✅ Trade WON!" : "❌ Trade LOST",
-            {
-              body: won
-                ? `+GHS ${profit} on ${data.asset} ${data.direction}`
-                : `-GHS ${profit} on ${data.asset} ${data.direction}`,
-              icon: "/favicon.ico",
-              tag: "trade-result",
-            }
-          );
+          const profitAmt = Math.abs(data.lastProfit ?? 0);
+          const sym: string = data.asset ?? data.symbol ?? "";
+          if (won) {
+            notify({ type: "win", symbol: sym, profit: profitAmt });
+          } else {
+            notify({ type: "loss", symbol: sym, amount: profitAmt });
+          }
         }
         prevSessionRef.current = data;
         setSession(data);
@@ -180,7 +178,7 @@ export default function Trade() {
   useEffect(() => {
     if (!isAdmin || !token) return;
     const fetchStats = () =>
-      fetch("/api/admin/stats", { headers: { Authorization: `Bearer ${token}` } })
+      fetch(`${apiBase}/api/admin/stats`, { headers: { Authorization: `Bearer ${token}` } })
         .then(r => r.ok ? r.json() : null)
         .then(d => { if (d) setAdminStats(d); })
         .catch(() => {});
@@ -198,7 +196,7 @@ export default function Trade() {
     }
     setSessionLoading(true);
     try {
-      const res = await fetch("/api/session/start", {
+      const res = await fetch(`${apiBase}/api/session/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tradePercent }),
@@ -213,7 +211,7 @@ export default function Trade() {
   const handleStopSession = async () => {
     setSessionLoading(true);
     try {
-      const res = await fetch("/api/session/stop", { method: "POST" });
+      const res = await fetch(`${apiBase}/api/session/stop`, { method: "POST" });
       const data = await res.json();
       setSession(data.status);
     } finally {
@@ -222,10 +220,10 @@ export default function Trade() {
   };
 
   const { data: assets } = useListAssets();
-  const { data: candles } = useGetCandles(selectedSymbol, { query: { enabled: !!selectedSymbol } });
-  const { data: pattern } = useAnalyzePattern(selectedSymbol, { query: { enabled: !!selectedSymbol, refetchInterval: 15000 } });
-  const { data: trades, refetch: refetchTrades } = useListTrades({ query: { refetchInterval: 3000 } });
-  const { data: account } = useGetAccount({ query: { refetchInterval: 3000 } });
+  const { data: candles } = useGetCandles(selectedSymbol, { query: { enabled: !!selectedSymbol, queryKey: getGetCandlesQueryKey(selectedSymbol) } });
+  const { data: pattern } = useAnalyzePattern(selectedSymbol, { query: { enabled: !!selectedSymbol, refetchInterval: 15000, queryKey: getAnalyzePatternQueryKey(selectedSymbol) } });
+  const { data: trades, refetch: refetchTrades } = useListTrades({ query: { refetchInterval: 3000, queryKey: getListTradesQueryKey() } });
+  const { data: account } = useGetAccount({ query: { refetchInterval: 3000, queryKey: getGetAccountQueryKey() } });
 
   const placeTrade = usePlaceTrade({
     mutation: {
@@ -473,7 +471,7 @@ export default function Trade() {
                 <div className="grid grid-cols-3 gap-3 text-xs">
                   <div className="bg-secondary/50 rounded-lg p-2">
                     <div className="text-muted-foreground mb-0.5">RSI</div>
-                    <div className={`font-bold ${pattern.rsi > 70 ? "text-loss" : pattern.rsi < 30 ? "text-profit" : "text-foreground"}`}>{pattern.rsi}</div>
+                    <div className={`font-bold ${(pattern.rsi ?? 50) > 70 ? "text-loss" : (pattern.rsi ?? 50) < 30 ? "text-profit" : "text-foreground"}`}>{pattern.rsi}</div>
                   </div>
                   <div className="bg-secondary/50 rounded-lg p-2">
                     <div className="text-muted-foreground mb-0.5">Trend</div>
@@ -513,8 +511,8 @@ export default function Trade() {
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className={`font-bold ${t.profit !== null && t.profit >= 0 ? "text-profit" : "text-loss"}`}>
-                      {t.profit !== null ? `${t.profit >= 0 ? "+" : ""}GHS ${t.profit.toFixed(2)}` : "—"}
+                    <div className={`font-bold ${t.profit != null && t.profit >= 0 ? "text-profit" : "text-loss"}`}>
+                      {t.profit != null ? `${t.profit >= 0 ? "+" : ""}GHS ${t.profit.toFixed(2)}` : "—"}
                     </div>
                     <div className="text-xs text-muted-foreground">GHS {t.amount.toFixed(2)}</div>
                   </div>
@@ -811,7 +809,7 @@ export default function Trade() {
                         {t.direction}
                       </span>
                     </div>
-                    <TradeTimer closedAt={t.closedAt} duration={t.duration} createdAt={t.createdAt} />
+                    <TradeTimer closedAt={t.closedAt ?? null} duration={t.duration} createdAt={t.createdAt} />
                   </div>
                   <div className="flex justify-between text-xs text-muted-foreground">
                     <span>GHS {t.amount.toFixed(2)}</span>

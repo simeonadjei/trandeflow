@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "../lib/AuthContext";
+import { apiBase } from "../lib/api";
 import {
   TrendingUp, Users, BarChart2, DollarSign, ArrowUpToLine, ArrowDownToLine,
   Activity, LogOut, RefreshCw, ShieldCheck, Clock, Loader2, Menu, X,
@@ -68,7 +69,7 @@ export default function Admin() {
   const [loading, setLoading] = useState(true);
 
   const apiFetch = async (path: string) => {
-    const res = await fetch(`/api${path}`, { headers: { Authorization: `Bearer ${token}` } });
+    const res = await fetch(`${apiBase}/api${path}`, { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) throw new Error(`${res.status}`);
     return res.json();
   };

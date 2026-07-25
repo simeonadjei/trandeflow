@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { TrendingUp, Eye, EyeOff, Loader2, AlertCircle } from "lucide-react";
 import { useAuth } from "../lib/AuthContext";
+import { apiBase } from "../lib/api";
 
 export default function Login() {
   const [, navigate] = useLocation();
@@ -17,7 +18,7 @@ export default function Login() {
     setError("");
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/login", {
+      const res = await fetch(`${apiBase}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),

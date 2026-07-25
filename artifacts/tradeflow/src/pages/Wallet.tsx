@@ -34,9 +34,9 @@ export default function Wallet() {
   const [error, setError]       = useState<string | null>(null);
 
   const queryClient = useQueryClient();
-  const { data: account, refetch: refetchAccount } = useGetAccount({ query: { refetchInterval: 4000 } });
-  const { data: deposits,     refetch: refetchDeposits }     = useListDeposits({    query: { refetchInterval: 5000 } });
-  const { data: withdrawals,  refetch: refetchWithdrawals }  = useListWithdrawals({ query: { refetchInterval: 5000 } });
+  const { data: account, refetch: refetchAccount } = useGetAccount({ query: { refetchInterval: 4000, queryKey: getGetAccountQueryKey() } });
+  const { data: deposits,     refetch: refetchDeposits }     = useListDeposits({    query: { refetchInterval: 5000, queryKey: getListDepositsQueryKey() } });
+  const { data: withdrawals,  refetch: refetchWithdrawals }  = useListWithdrawals({ query: { refetchInterval: 5000, queryKey: getListWithdrawalsQueryKey() } });
 
   const createDeposit = useCreateDeposit({
     mutation: {

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import { TrendingUp, Loader2, AlertCircle, CheckCircle, ArrowLeft } from "lucide-react";
+import { apiBase } from "../lib/api";
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState("");
@@ -19,7 +20,7 @@ export default function ForgotPassword() {
     setError("");
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/forgot-password", {
+      const res = await fetch(`${apiBase}/api/auth/forgot-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
@@ -41,7 +42,7 @@ export default function ForgotPassword() {
     if (newPassword.length < 6) { setError("Password must be at least 6 characters"); return; }
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/reset-password", {
+      const res = await fetch(`${apiBase}/api/auth/reset-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token: resetToken, newPassword }),

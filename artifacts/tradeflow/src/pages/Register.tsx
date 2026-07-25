@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { TrendingUp, Eye, EyeOff, Loader2, AlertCircle, CheckCircle } from "lucide-react";
 import { useAuth } from "../lib/AuthContext";
+import { apiBase } from "../lib/api";
 
 export default function Register() {
   const [, navigate] = useLocation();
@@ -19,7 +20,7 @@ export default function Register() {
     if (password.length < 6) { setError("Password must be at least 6 characters"); return; }
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/register", {
+      const res = await fetch(`${apiBase}/api/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, email, password }),
