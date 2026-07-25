@@ -1,0 +1,159 @@
+Skip to content
+
+AI
+
+
+
+
+
+
+
+services:
+  - type: web
+    name: trandeflow-api
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: pnpm install --no-frozen-lockfile && pnpm --filter @workspace/api-server run build
+    startCommand: node --enable-source-maps artifacts/api-server/dist/index.mjs
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: SESSION_SECRET
+        sync: false
+      - key: MEXC_API_KEY
+        sync: false
+      - key: MEXC_API_SECRET
+        sync: false
+      - key: NEON_DATABASE_URL
+        sync: false
+
+  - type: web
+    name: tradeflow-frontend
+    env: static
+    buildCommand: pnpm install --no-frozen-lockfile && pnpm --filter @workspace/tradeflow run build
+    staticPublishPath: artifacts/tradeflow/dist/public
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        value: https://trandeflow-api.onrender.com
+
+
+AI
+
+YAML
+
+0
+0
+
+Diff
+
+
+Ln 1, Col 1
+
+Spaces: 2
+
+History
+now what happens if i set it at 10% and click trade, how does the bot scan, trade
+
+AP
+apexlearning12
+apexlearning12
+1 hour ago
+
+3 actions
+Here's exactly what happens step by step when you set 10% and press START AUTO BOT:
+
+1. Scan (every 5 seconds) The bot pulls the last 30 one-minute candles for BTCUSDT and ETHUSDT from MEXC and scores each one against 8 conditions:
+
+RSI ≤ 55 (not overbought)
+Last candle is green (bullish)
+3 of last 5 candles are green
+Candle body size maintained
+More wick below than above (buying pressure)
+Price above the 10-candle moving average
+Higher low than previous candle
+Sustained higher lows (trend)
+2. Signal threshold Needs 6 out of 8 to pass. If neither BTC nor ETH scores 6+, it waits 5 seconds and scans again — you'll see "Signal X/8 — need 6/8, scanning again…" on screen.
+
+3. Real buy on MEXC Once a signal passes, it calculates your stake: 1.86 USDT × 10% = 0.19 USDT and places a real market BUY on MEXC — actual crypto is purchased from your account.
+
+4. Monitor the position (up to 30 seconds) Every 2 seconds it checks the live price and re-scores the signal. It exits early if:
+
+Price rises +0.3% → exits as WIN
+Price drops -0.3% → exits as LOSS
+Signal drops below 6/8 → exits immediately
+30 seconds pass → exits regardless
+5. Real sell on MEXC Places a market SELL of the exact crypto amount bought. USDT profit/loss lands back in your account. Result is recorded in trade history.
+
+6. Loop Immediately starts scanning again for the next signal.
+
+At 10% of 1.86 USDT, each trade stakes about 0.19 USDT — small enough to run many cycles without draining the account fast. Raise the % to trade larger per cycle.
+
+
+Worked for 22 seconds
+balance still not showing, both mexc and real balance still 0, trade button inactive
+
+AP
+apexlearning12
+apexlearning12
+1 hour ago
+
+32 actions
+Now I see the full picture. The root issues are:
+
+Render deployment: The frontend calls its Render API, which may still have empty MEXC keys — mexcConnected: false → balance falls back to internal GHS balance (0)
+Frontend bug: hasBalance gates buttons on displayBalance >= amount — if balance comes back as 0 from the API, buttons stay disabled even when MEXC might actually have funds
+I'll fix both — make the button gate smarter (let the server reject if truly insufficient, don't block client-side on stale 0), and also fix non-MEXC symbol simulated trades to properly use MEXC balance on the server.
+
+
+6 actions
+Now update the UP/DOWN buttons to use tradeBlocked and fix the warning message:
+
+
+2 actions
+Now fix the server — simulated real-mode trades currently check account.balance (GHS = 0) instead of MEXC USDT balance. Also remove the leftover hasBalance reference. Let me do all of this in parallel:
+
+
+10 actions
+Pushed. Here's what changed and what's still needed:
+
+What the fix does: The UP/DOWN buttons no longer rely on the client-side balance display. They now stay active unless the server has confirmed (with a live MEXC check) that your balance is specifically too low. A stale or 0 display no longer blocks trading.
+
+Why balance still shows 0: You're accessing trandeflow.onrender.com. The Render API server is separate from this Replit environment — the MEXC keys you re-entered here only apply to Replit. Render's API still can't connect to MEXC, so it returns mexcConnected: false and the balance falls back to 0.
+
+To fix the Render balance display:
+
+Go to your Render dashboard → your API service → Environment
+Make sure MEXC_API_KEY and MEXC_API_SECRET have their actual values (not just the names — the values must be the real key strings from MEXC)
+Save → Render auto-redeploys the API
+Once the Render API has the real keys, mexcConnected: true comes back and your 1.86 USDT shows in the top bar. The UP/DOWN buttons already work now regardless — try clicking one and if MEXC keys are valid on Render's side, it will execute.
+
+
+Worked for 5 minutes
+I mean render webservice
+
+AP
+apexlearning12
+apexlearning12
+57 minutes ago
+
+3 actions
+The render.yaml only defines the static frontend — the API service isn't in it, so Render manages it separately. Let me add the API service to render.yaml with the MEXC env vars, and also trigger a redeploy by pushing.
+
+
+Created render.yaml
+You've reached your daily free quota limit. It will reset at 12:00 AM UTC.
+
+
+Worked for 29 seconds
+I mean render webservice Agent activity The `render.yaml` only defines the static frontend — the API service isn't in it, so Render manages it separately. Let me add the API service to `render.yaml` with the MEXC env vars, and also trigger a redeploy by pushing. Agent activity Agent activity Agent activity
+
+Scroll to latest
+Guests can't use Agent in Starter Plan user's repls
+Trade Mastermind (2) - Replit
