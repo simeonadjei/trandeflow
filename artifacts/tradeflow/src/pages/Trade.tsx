@@ -124,7 +124,7 @@ function TradeTimer({ closedAt, duration, createdAt }: { closedAt: string | null
 
 export default function Trade() {
   const [selectedSymbol, setSelectedSymbol] = useState("EURUSD");
-  const [amount, setAmount] = useState(50);
+  const [amount, setAmount] = useState(1);
   const [tradePercent, setTradePercent] = useState(50);
   const [showAssets, setShowAssets] = useState(false);
   const [session, setSession] = useState<any>(null);
@@ -592,7 +592,7 @@ export default function Trade() {
                 className="w-full bg-card border border-border rounded-lg px-3 py-2 text-sm font-mono font-semibold focus:outline-none focus:border-primary transition-colors"
               />
               <div className="flex gap-1.5 mt-2">
-                {[5, 10, 50, 100].map((v) => (
+                {[1, 5, 10, 25].map((v) => (
                   <button
                     key={v}
                     onClick={() => setAmount(v)}
