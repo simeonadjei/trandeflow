@@ -187,6 +187,12 @@ export default function Trade() {
     return () => clearInterval(iv);
   }, [isAdmin, token]);
 
+  const { data: assets } = useListAssets();
+  const { data: candles } = useGetCandles(selectedSymbol, { query: { enabled: !!selectedSymbol, queryKey: getGetCandlesQueryKey(selectedSymbol) } });
+  const { data: pattern } = useAnalyzePattern(selectedSymbol, { query: { enabled: !!selectedSymbol, refetchInterval: 15000, queryKey: getAnalyzePatternQueryKey(selectedSymbol) } });
+  const { data: trades, refetch: refetchTrades } = useListTrades({ query: { refetchInterval: 3000, queryKey: getListTradesQueryKey() } });
+  const { data: account } = useGetAccount({ query: { refetchInterval: 3000, queryKey: getGetAccountQueryKey() } });
+
   // In real mode: use MEXC free USDT as the effective balance (min 1 USDT to start)
   const MIN_TRADE_BALANCE_USDT = 1;
   const realEffectiveBalance = account?.mexcConnected && account?.mexcFreeUsdt != null
@@ -223,12 +229,6 @@ export default function Trade() {
       setSessionLoading(false);
     }
   };
-
-  const { data: assets } = useListAssets();
-  const { data: candles } = useGetCandles(selectedSymbol, { query: { enabled: !!selectedSymbol, queryKey: getGetCandlesQueryKey(selectedSymbol) } });
-  const { data: pattern } = useAnalyzePattern(selectedSymbol, { query: { enabled: !!selectedSymbol, refetchInterval: 15000, queryKey: getAnalyzePatternQueryKey(selectedSymbol) } });
-  const { data: trades, refetch: refetchTrades } = useListTrades({ query: { refetchInterval: 3000, queryKey: getListTradesQueryKey() } });
-  const { data: account } = useGetAccount({ query: { refetchInterval: 3000, queryKey: getGetAccountQueryKey() } });
 
   const placeTrade = usePlaceTrade({
     mutation: {
