@@ -42,9 +42,31 @@ export default defineConfig({
     dedupe: ["react", "react-dom"],
   },
   root: path.resolve(import.meta.dirname),
+  optimizeDeps: {
+    include: [
+      "recharts",
+      "recharts/es6/chart/AreaChart",
+      "recharts/es6/chart/ComposedChart",
+      "recharts/es6/component/Area",
+      "recharts/es6/component/Bar",
+      "recharts/es6/component/Line",
+      "d3-scale",
+      "d3-shape",
+      "d3-path",
+    ],
+  },
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("recharts") || id.includes("d3-") || id.includes("victory-vendor")) {
+            return "recharts";
+          }
+        },
+      },
+    },
   },
   server: {
     port,
