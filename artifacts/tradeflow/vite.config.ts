@@ -43,27 +43,20 @@ export default defineConfig({
   },
   root: path.resolve(import.meta.dirname),
   optimizeDeps: {
-    include: [
-      "recharts",
-      "recharts/es6/chart/AreaChart",
-      "recharts/es6/chart/ComposedChart",
-      "recharts/es6/component/Area",
-      "recharts/es6/component/Bar",
-      "recharts/es6/component/Line",
-      "d3-scale",
-      "d3-shape",
-      "d3-path",
-    ],
+    include: ["recharts"],
   },
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    commonjsOptions: {
+      transformMixedEsModules: true,
+    },
     rollupOptions: {
       output: {
-        manualChunks(id) {
-          if (id.includes("recharts") || id.includes("d3-") || id.includes("victory-vendor")) {
-            return "recharts";
-          }
+        // Object form ensures recharts + ALL transitive D3 deps land in one chunk,
+        // preventing the "Cannot access 'X' before initialization" TDZ crash.
+        manualChunks: {
+          recharts: ["recharts"],
         },
       },
     },
