@@ -1,0 +1,27 @@
+==> Cloning from https://github.com/simeonadjei/trandeflow
+==> Checking out commit 376847f52af1b6311ef2d94d44a75df87e75da84 in branch main
+==> Installing dependencies with pnpm...
+==> Using Node.js version 24.14.1 (default)
+==> Docs on specifying a Node.js version: https://render.com/docs/node-version
+==> Running build command 'NODE_ENV=development npx pnpm@9 install --no-frozen-lockfile && npx pnpm@9 --filter @workspace/tradeflow run build'...
+(node:185) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+> @workspace/tradeflow@0.0.0 build /opt/render/project/src/artifacts/tradeflow
+> vite build --config vite.config.ts
+failed to load config from /opt/render/project/src/artifacts/tradeflow/vite.config.ts
+error during build:
+Error: BASE_PATH environment variable is required but was not provided.
+    at file:///opt/render/project/src/artifacts/tradeflow/node_modules/.vite-temp/vite.config.ts.timestamp-1784954227128-5911e2b334e4d.mjs:20:9
+    at ModuleJob.run (node:internal/modules/esm/module_job:430:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:661:26)
+    at async loadConfigFromBundledFile (file:///opt/render/project/src/node_modules/.pnpm/vite@7.3.3_@types+node@25.6.2_jiti@2.7.0_lightningcss@1.32.0_tsx@4.21.0_yaml@2.8.4/node_modules/vite/dist/node/chunks/config.js:35936:12)
+    at async bundleAndLoadConfigFile (file:///opt/render/project/src/node_modules/.pnpm/vite@7.3.3_@types+node@25.6.2_jiti@2.7.0_lightningcss@1.32.0_tsx@4.21.0_yaml@2.8.4/node_modules/vite/dist/node/chunks/config.js:35824:17)
+    at async loadConfigFromFile (file:///opt/render/project/src/node_modules/.pnpm/vite@7.3.3_@types+node@25.6.2_jiti@2.7.0_lightningcss@1.32.0_tsx@4.21.0_yaml@2.8.4/node_modules/vite/dist/node/chunks/config.js:35791:42)
+    at async resolveConfig (file:///opt/render/project/src/node_modules/.pnpm/vite@7.3.3_@types+node@25.6.2_jiti@2.7.0_lightningcss@1.32.0_tsx@4.21.0_yaml@2.8.4/node_modules/vite/dist/node/chunks/config.js:35440:22)
+    at async createBuilder (file:///opt/render/project/src/node_modules/.pnpm/vite@7.3.3_@types+node@25.6.2_jiti@2.7.0_lightningcss@1.32.0_tsx@4.21.0_yaml@2.8.4/node_modules/vite/dist/node/chunks/config.js:33895:19)
+    at async CAC.<anonymous> (file:///opt/render/project/src/node_modules/.pnpm/vite@7.3.3_@types+node@25.6.2_jiti@2.7.0_lightningcss@1.32.0_tsx@4.21.0_yaml@2.8.4/node_modules/vite/dist/node/cli.js:629:10)
+/opt/render/project/src/artifacts/tradeflow:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/tradeflow@0.0.0 build: `vite build --config vite.config.ts`
+Exit status 1
+==> Build failed 😞
+==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
