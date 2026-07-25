@@ -1,0 +1,144 @@
+Skip to content
+
+AI
+
+
+
+
+
+
+
+Commands
+Search tools…
+https://trandeflow-api.onrender.com, this is the value
+
+MC
+mcphoebeenterp1
+mcphoebeenterp1
+2 hours ago
+Setting build-time environment variables
+
+Setting build-time environment variables
+Your frontend is already coded to use that variable — you just need to set it in Render.
+
+In your Render static site → Environment tab, add:
+
+Key: VITE_API_URL
+Value: https://trandeflow-api.onrender.com
+Then click Manual Deploy (or it will redeploy automatically). After the build completes, registration and login will route to your API server correctly.
+
+The CORS on your API server already allows all origins, so no changes needed there.
+
+
+Worked for 14 seconds
+Forget password, register , all not working,
+
+MC
+mcphoebeenterp1
+mcphoebeenterp1
+2 hours ago
+
+4 actions
+Your Render API server is live and healthy. The problem is purely that your static site isn't pointing to it yet — VITE_API_URL hasn't been set. Let me fix the ForgotPassword error handling too while you set it:
+
+
+2 actions
+Now go to Render and do this:
+
+On your static site service → Environment tab:
+
+Add environment variable:
+
+Key: VITE_API_URL
+Value: https://trandeflow-api.onrender.com
+Then hit Manual Deploy → Deploy latest commit.
+
+That one change fixes register, login, and forgot password all at once — the frontend will send all API calls to your Render web service instead of trying to reach a non-existent server on the static site domain.
+
+
+Worked for 45 seconds
+
+Checkpoint made
+2 hours ago
+It is there already but I clicked on manual deploy, still not working
+
+MC
+mcphoebeenterp1
+mcphoebeenterp1
+2 hours ago
+Building with environment variables
+
+Building with environment variables
+Let me test the Render API server directly to check if the issue is there:
+
+
+3 actions
+The Render API server is working perfectly — registration returns a success response. The API isn't the problem.
+
+The issue is almost certainly your browser cache serving the old JS bundle that was built without VITE_API_URL. Try a hard refresh:
+
+Windows/Linux: Ctrl + Shift + R
+Mac: Cmd + Shift + R
+Mobile: Clear browser cache or open in an incognito/private tab
+If that doesn't fix it, check your Render static site's build log to confirm VITE_API_URL was present during the build — it needs to be set before the build runs, not after.
+
+
+Worked for 39 seconds
+still error
+
+MC
+mcphoebeenterp1
+mcphoebeenterp1
+20 minutes ago
+
+3 actions
+The Render deployment is using your GitHub repo — my recent code fixes haven't been pushed there yet. Let me check the git setup and push the changes:
+
+
+9 actions
+Your local commits haven't been pushed to GitHub yet — Render is still running the old code. Let me push now:
+
+
+6 actions
+Found the real problem. The code on GitHub (what Render deployed) was using a hardcoded /api/auth/register URL and never used VITE_API_URL at all. My fixes that add the apiBase prefix are sitting in Replit but haven't reached GitHub yet — that's why setting the env var didn't help.
+
+I can't push directly (GitHub auth needed). You need to push from the Git pane — just commit and push to main, then Render will auto-deploy the fix.
+
+
+Open in Git
+
+
+Worked for 1 minute
+i have github token
+
+MC
+mcphoebeenterp1
+mcphoebeenterp1
+17 minutes ago
+
+Show less
+Using environment secrets
+
+Using environment secrets
+Loaded skill environment-secrets
+Requesting token securely
+
+Requesting token securely
+Add secrets
+GITHUB_TOKEN
+Secret provided
+MC
+mcphoebeenterp1
+mcphoebeenterp1
+
+Worked for 18 seconds
+
+2 actions
+You've reached your monthly free quota limit. It will reset on July 31, 2026.
+
+
+Worked for 8 seconds
+Agent activity Agent activity Agent activity
+
+Scroll to latest
+Guests can't use Agent in Starter Plan user's repls
