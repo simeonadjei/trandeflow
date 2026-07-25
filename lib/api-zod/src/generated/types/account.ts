@@ -5,6 +5,7 @@
  * TradeFlow API
  * OpenAPI spec version: 0.1.0
  */
+import type { MexcBalanceBreakdownItem } from './mexcBalanceBreakdownItem';
 
 export interface Account {
   id: number;
@@ -16,4 +17,30 @@ export interface Account {
   totalProfit?: number;
   totalTrades?: number;
   winRate?: number;
+  mexcConnected?: boolean;
+  /**
+     * Total MEXC portfolio value in USDT (free + locked USDT + crypto holdings at market price)
+     * @nullable
+     */
+  mexcBalanceUsdt?: number | null;
+  /**
+     * Free (available) USDT on MEXC
+     * @nullable
+     */
+  mexcFreeUsdt?: number | null;
+  /**
+     * Locked USDT on MEXC (in open orders)
+     * @nullable
+     */
+  mexcLockedUsdt?: number | null;
+  /**
+     * Value of crypto holdings (BTC, ETH, etc.) converted to USDT at current prices
+     * @nullable
+     */
+  mexcCryptoValueUsdt?: number | null;
+  /**
+     * Per-asset balance breakdown
+     * @nullable
+     */
+  mexcBreakdown?: MexcBalanceBreakdownItem[] | null;
 }

@@ -18,6 +18,7 @@ export * from './depositInputMomoProvider';
 export * from './depositMomoProvider';
 export * from './depositStatus';
 export * from './healthStatus';
+export * from './mexcBalanceBreakdownItem';
 export * from './patternAnalysis';
 export * from './patternAnalysisSignal';
 export * from './trade';

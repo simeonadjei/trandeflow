@@ -9,7 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNotifications } from "../lib/useNotifications";
 import { useDemoMode } from "../lib/DemoModeContext";
 import { useAuth } from "../lib/AuthContext";
-import { TrendingUp, TrendingDown, ChevronDown, Clock, CheckCircle, XCircle, FlaskConical, Zap, StopCircle, Activity, ArrowUpToLine, ArrowDownToLine, ShieldCheck, ChevronUp } from "lucide-react";
+import { TrendingUp, TrendingDown, ChevronDown, Clock, CheckCircle, XCircle, FlaskConical, Zap, StopCircle, Activity, ArrowUpToLine, ArrowDownToLine, ShieldCheck, ChevronUp, Wallet, RefreshCw } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart, Bar, Line
 } from "recharts";
@@ -751,6 +751,47 @@ export default function Trade() {
               )}
             </div>
           </div>
+
+          {/* MEXC Portfolio Balance */}
+          {!isDemo && account?.mexcConnected && (
+            <div className="px-4 pb-4">
+              <div className="bg-card border border-primary/20 rounded-xl p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                    <Wallet className="w-3.5 h-3.5 text-primary" />
+                    MEXC Account
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-black text-primary">
+                      {(account.mexcBalanceUsdt ?? 0).toFixed(4)} USDT
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">Total portfolio</div>
+                  </div>
+                </div>
+                {/* Breakdown */}
+                <div className="space-y-1 border-t border-border pt-2">
+                  {(account.mexcFreeUsdt ?? 0) > 0 && (
+                    <div className="flex justify-between text-[11px]">
+                      <span className="text-muted-foreground">Free USDT</span>
+                      <span className="font-mono font-semibold text-profit">{(account.mexcFreeUsdt ?? 0).toFixed(4)}</span>
+                    </div>
+                  )}
+                  {(account.mexcLockedUsdt ?? 0) > 0 && (
+                    <div className="flex justify-between text-[11px]">
+                      <span className="text-muted-foreground">In Orders (USDT)</span>
+                      <span className="font-mono font-semibold text-yellow-400">{(account.mexcLockedUsdt ?? 0).toFixed(4)}</span>
+                    </div>
+                  )}
+                  {account.mexcBreakdown?.filter(b => b.asset !== "USDT" && b.valueUsdt > 0).map(b => (
+                    <div key={b.asset} className="flex justify-between text-[11px]">
+                      <span className="text-muted-foreground">{b.asset} ({(b.free + b.locked).toFixed(6)})</span>
+                      <span className="font-mono font-semibold text-foreground">≈ {b.valueUsdt.toFixed(4)} USDT</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Open Trades */}
           <div className="p-4 flex-1">

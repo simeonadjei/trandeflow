@@ -3,7 +3,7 @@ import { db } from "@workspace/db";
 import { accountsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { startSession, stopSession, getSessionStatus } from "../lib/continuousTrader";
-import { hasMexcCredentials, getFreeBalance } from "../lib/mexcClient";
+import { hasMexcCredentials, getFreeBalance, getMexcPortfolioValueUsdt } from "../lib/mexcClient";
 
 const router = Router();
 
@@ -23,14 +23,30 @@ router.get("/account", async (req, res) => {
       account = created;
     }
 
-    // Fetch live MEXC USDT balance to show alongside internal balance
+    // Fetch live MEXC portfolio value (free USDT + locked USDT + crypto holdings at market price)
     let mexcBalanceUsdt: number | null = null;
+    let mexcFreeUsdt: number | null = null;
+    let mexcLockedUsdt: number | null = null;
+    let mexcCryptoValueUsdt: number | null = null;
+    let mexcBreakdown: Array<{ asset: string; free: number; locked: number; valueUsdt: number }> | null = null;
     const mexcConnected = hasMexcCredentials();
     if (mexcConnected) {
       try {
-        mexcBalanceUsdt = await getFreeBalance("USDT");
+        const portfolio = await getMexcPortfolioValueUsdt();
+        mexcBalanceUsdt       = portfolio.totalUsdt;
+        mexcFreeUsdt          = portfolio.freeUsdt;
+        mexcLockedUsdt        = portfolio.lockedUsdt;
+        mexcCryptoValueUsdt   = portfolio.cryptoValueUsdt;
+        mexcBreakdown         = portfolio.breakdown;
       } catch (err) {
-        req.log.warn(err, "Failed to fetch MEXC balance");
+        req.log.warn(err, "Failed to fetch MEXC portfolio value");
+        // Fallback to free USDT only
+        try {
+          mexcFreeUsdt = await getFreeBalance("USDT");
+          mexcBalanceUsdt = mexcFreeUsdt;
+        } catch (err2) {
+          req.log.warn(err2, "Failed to fetch MEXC free balance fallback");
+        }
       }
     }
 
@@ -47,6 +63,10 @@ router.get("/account", async (req, res) => {
       realizedPnlUsd: parseFloat(account.realizedPnlUsd as string),
       mexcConnected,
       mexcBalanceUsdt,
+      mexcFreeUsdt,
+      mexcLockedUsdt,
+      mexcCryptoValueUsdt,
+      mexcBreakdown,
       // kept for backward compat
       coinbaseConnected: false,
       coinbaseBalanceUsd: null,

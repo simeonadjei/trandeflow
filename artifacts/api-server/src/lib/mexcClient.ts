@@ -122,6 +122,70 @@ export async function getFreeBalance(asset: string): Promise<number> {
   return entry ? parseFloat(entry.free) : 0;
 }
 
+/**
+ * Total MEXC portfolio value in USDT.
+ * Adds up free + locked USDT, plus BTC and ETH holdings converted at current
+ * market prices. This reflects the true account value even when the bot has
+ * funds tied up in open crypto positions.
+ */
+export async function getMexcPortfolioValueUsdt(): Promise<{
+  totalUsdt: number;
+  freeUsdt: number;
+  lockedUsdt: number;
+  cryptoValueUsdt: number;
+  breakdown: Array<{ asset: string; free: number; locked: number; valueUsdt: number }>;
+}> {
+  const [accountData] = await Promise.all([privateGet("/api/v3/account")]);
+  const balances = (accountData.balances as any[]) ?? [];
+
+  // Collect non-zero balances
+  const nonZero = balances
+    .map((b: any) => ({ asset: b.asset as string, free: parseFloat(b.free), locked: parseFloat(b.locked) }))
+    .filter((b) => b.free + b.locked > 0);
+
+  const usdtEntry  = nonZero.find((b) => b.asset === "USDT");
+  const freeUsdt   = usdtEntry?.free  ?? 0;
+  const lockedUsdt = usdtEntry?.locked ?? 0;
+
+  // Crypto assets to price (skip USDT itself)
+  const cryptoAssets = nonZero.filter((b) => b.asset !== "USDT" && b.free + b.locked > 0);
+
+  // Fetch prices in parallel for known crypto holdings
+  const priceMap: Record<string, number> = {};
+  await Promise.all(
+    cryptoAssets.map(async (b) => {
+      try {
+        const p = await getPrice(`${b.asset}USDT`);
+        priceMap[b.asset] = p;
+      } catch {
+        // If symbol not found or unreachable, value = 0
+        priceMap[b.asset] = 0;
+      }
+    })
+  );
+
+  const breakdown: Array<{ asset: string; free: number; locked: number; valueUsdt: number }> = [];
+  let cryptoValueUsdt = 0;
+
+  if (usdtEntry) {
+    breakdown.push({ asset: "USDT", free: freeUsdt, locked: lockedUsdt, valueUsdt: freeUsdt + lockedUsdt });
+  }
+  for (const b of cryptoAssets) {
+    const price = priceMap[b.asset] ?? 0;
+    const valueUsdt = (b.free + b.locked) * price;
+    cryptoValueUsdt += valueUsdt;
+    breakdown.push({ asset: b.asset, free: b.free, locked: b.locked, valueUsdt });
+  }
+
+  return {
+    totalUsdt: freeUsdt + lockedUsdt + cryptoValueUsdt,
+    freeUsdt,
+    lockedUsdt,
+    cryptoValueUsdt,
+    breakdown,
+  };
+}
+
 export interface OrderResult {
   orderId:    string;
   symbol:     string;

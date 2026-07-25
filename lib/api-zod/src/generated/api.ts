@@ -28,7 +28,18 @@ export const GetAccountResponse = zod.object({
   "autoInvestEnabled": zod.boolean(),
   "totalProfit": zod.number().optional(),
   "totalTrades": zod.number().optional(),
-  "winRate": zod.number().optional()
+  "winRate": zod.number().optional(),
+  "mexcConnected": zod.boolean().optional(),
+  "mexcBalanceUsdt": zod.number().nullish().describe('Total MEXC portfolio value in USDT (free + locked USDT + crypto holdings at market price)'),
+  "mexcFreeUsdt": zod.number().nullish().describe('Free (available) USDT on MEXC'),
+  "mexcLockedUsdt": zod.number().nullish().describe('Locked USDT on MEXC (in open orders)'),
+  "mexcCryptoValueUsdt": zod.number().nullish().describe('Value of crypto holdings (BTC, ETH, etc.) converted to USDT at current prices'),
+  "mexcBreakdown": zod.array(zod.object({
+  "asset": zod.string(),
+  "free": zod.number(),
+  "locked": zod.number(),
+  "valueUsdt": zod.number()
+})).nullish().describe('Per-asset balance breakdown')
 })
 
 

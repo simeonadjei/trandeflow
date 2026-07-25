@@ -9,6 +9,13 @@ export interface HealthStatus {
   status: string;
 }
 
+export interface MexcBalanceBreakdownItem {
+  asset: string;
+  free: number;
+  locked: number;
+  valueUsdt: number;
+}
+
 export interface Account {
   id: number;
   name: string;
@@ -19,6 +26,32 @@ export interface Account {
   totalProfit?: number;
   totalTrades?: number;
   winRate?: number;
+  mexcConnected?: boolean;
+  /**
+     * Total MEXC portfolio value in USDT (free + locked USDT + crypto holdings at market price)
+     * @nullable
+     */
+  mexcBalanceUsdt?: number | null;
+  /**
+     * Free (available) USDT on MEXC
+     * @nullable
+     */
+  mexcFreeUsdt?: number | null;
+  /**
+     * Locked USDT on MEXC (in open orders)
+     * @nullable
+     */
+  mexcLockedUsdt?: number | null;
+  /**
+     * Value of crypto holdings (BTC, ETH, etc.) converted to USDT at current prices
+     * @nullable
+     */
+  mexcCryptoValueUsdt?: number | null;
+  /**
+     * Per-asset balance breakdown
+     * @nullable
+     */
+  mexcBreakdown?: MexcBalanceBreakdownItem[] | null;
 }
 
 export interface AccountStats {

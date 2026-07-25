@@ -255,6 +255,19 @@ components:
       required:
         - status
 
+    MexcBalanceBreakdownItem:
+      type: object
+      required: [asset, free, locked, valueUsdt]
+      properties:
+        asset:
+          type: string
+        free:
+          type: number
+        locked:
+          type: number
+        valueUsdt:
+          type: number
+
     Account:
       type: object
       required: [id, name, balance, demoBalance, currency, autoInvestEnabled]
@@ -277,6 +290,25 @@ components:
           type: integer
         winRate:
           type: number
+        mexcConnected:
+          type: boolean
+        mexcBalanceUsdt:
+          type: ["number", "null"]
+          description: Total MEXC portfolio value in USDT (free + locked USDT + crypto holdings at market price)
+        mexcFreeUsdt:
+          type: ["number", "null"]
+          description: Free (available) USDT on MEXC
+        mexcLockedUsdt:
+          type: ["number", "null"]
+          description: Locked USDT on MEXC (in open orders)
+        mexcCryptoValueUsdt:
+          type: ["number", "null"]
+          description: Value of crypto holdings (BTC, ETH, etc.) converted to USDT at current prices
+        mexcBreakdown:
+          type: ["array", "null"]
+          items:
+            $ref: "#/components/schemas/MexcBalanceBreakdownItem"
+          description: Per-asset balance breakdown
 
     AccountStats:
       type: object
