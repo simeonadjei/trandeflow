@@ -2,7 +2,7 @@ services:
   - type: web
     name: tradeflow-frontend
     env: static
-    buildCommand: npm install -g pnpm@10 && pnpm install --no-frozen-lockfile && pnpm --filter @workspace/tradeflow run build
+    buildCommand: pnpm install --no-frozen-lockfile && pnpm --filter @workspace/tradeflow run build
     staticPublishPath: artifacts/tradeflow/dist/public
     routes:
       - type: rewrite
