@@ -256,6 +256,17 @@ export default function Trade() {
     placeTrade.mutate({ data: { symbol: selectedSymbol, direction, amount, duration: 60, isDemo } });
   };
 
+  // In real mode let the server enforce balance — only block on the client
+  // when we have a confirmed non-null mexcFreeUsdt that is definitely too low.
+  // A stale/null balance should never permanently disable the buttons.
+  const tradeBlocked = placeTrade.isPending || (
+    isDemo
+      ? (displayBalance < amount || displayBalance <= 0)
+      : account?.mexcConnected && account?.mexcFreeUsdt != null
+        ? account.mexcFreeUsdt < amount
+        : false
+  );
+
   const signalColor = pattern?.signal === "BUY" ? "text-profit" : pattern?.signal === "SELL" ? "text-loss" : "text-yellow-400";
 
   return (
@@ -621,7 +632,6 @@ export default function Trade() {
             {/* ── Manual UP / DOWN trade buttons ── */}
             {(() => {
               const isMexcSymbol = selectedSymbol === "BTCUSD" || selectedSymbol === "ETHUSD";
-              const hasBalance = displayBalance >= amount && displayBalance > 0;
               const isRealMexc = !isDemo && account?.mexcConnected;
               const upIsReal = isRealMexc && isMexcSymbol;
               return (
@@ -629,7 +639,7 @@ export default function Trade() {
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       onClick={() => handleTrade("UP")}
-                      disabled={placeTrade.isPending || !hasBalance}
+                      disabled={tradeBlocked}
                       className="py-3 rounded-xl font-black text-sm tracking-wide bg-profit hover:bg-profit/90 text-white transition-all disabled:opacity-40 flex flex-col items-center justify-center gap-0.5 shadow-md shadow-profit/20"
                     >
                       <TrendingUp className="w-4 h-4" />
@@ -640,7 +650,7 @@ export default function Trade() {
                     </button>
                     <button
                       onClick={() => handleTrade("DOWN")}
-                      disabled={placeTrade.isPending || !hasBalance}
+                      disabled={tradeBlocked}
                       className="py-3 rounded-xl font-black text-sm tracking-wide bg-loss hover:bg-loss/90 text-white transition-all disabled:opacity-40 flex flex-col items-center justify-center gap-0.5 shadow-md shadow-loss/20"
                     >
                       <TrendingDown className="w-4 h-4" />
@@ -650,13 +660,14 @@ export default function Trade() {
                       )}
                     </button>
                   </div>
-                  {!hasBalance && (
+                  {isDemo && displayBalance < amount && (
                     <p className="text-[11px] text-center text-yellow-400">
-                      {isRealMexc
-                        ? `Need ≥ ${amount} USDT free on MEXC to trade`
-                        : isDemo
-                        ? `Need ≥ ${displayCurrency} ${amount} demo balance`
-                        : `Insufficient balance`}
+                      Need ≥ {displayCurrency} {amount} demo balance
+                    </p>
+                  )}
+                  {!isDemo && account?.mexcConnected && account?.mexcFreeUsdt != null && account.mexcFreeUsdt < amount && (
+                    <p className="text-[11px] text-center text-yellow-400">
+                      Need ≥ {amount} USDT free on MEXC (you have {account.mexcFreeUsdt.toFixed(4)})
                     </p>
                   )}
                 </div>
