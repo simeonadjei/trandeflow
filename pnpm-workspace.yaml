@@ -138,7 +138,7 @@ overrides:
   "rollup>@rollup/rollup-linux-riscv64-gnu": "-"
   "rollup>@rollup/rollup-linux-riscv64-musl": "-"
   "rollup>@rollup/rollup-linux-s390x-gnu": "-"
-  "rollup>@rollup/rollup-linux-x64-musl": "-"
+  # "rollup>@rollup/rollup-linux-x64-musl": "-"   # kept for musl-based CI/Render builds
   "rollup>@rollup/rollup-openbsd-x64": "-"
   "rollup>@rollup/rollup-openharmony-arm64": "-"
   "rollup>@rollup/rollup-win32-arm64-msvc": "-"
