@@ -1,5 +1,26 @@
 services:
   - type: web
+    name: trandeflow-api
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: pnpm install --no-frozen-lockfile && pnpm --filter @workspace/api-server run build
+    startCommand: node --enable-source-maps artifacts/api-server/dist/index.mjs
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: SESSION_SECRET
+        sync: false
+      - key: MEXC_API_KEY
+        sync: false
+      - key: MEXC_API_SECRET
+        sync: false
+      - key: NEON_DATABASE_URL
+        sync: false
+
+  - type: web
     name: tradeflow-frontend
     env: static
     buildCommand: pnpm install --no-frozen-lockfile && pnpm --filter @workspace/tradeflow run build
