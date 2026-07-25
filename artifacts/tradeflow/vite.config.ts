@@ -43,9 +43,11 @@ export default defineConfig({
   },
   root: path.resolve(import.meta.dirname),
   optimizeDeps: {
-    include: ["recharts"],
+    include: ["recharts", "victory-vendor", "react-smooth"],
   },
   build: {
+    // esnext target avoids down-compilation that introduces TDZ in circular ESM deps
+    target: "esnext",
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
     commonjsOptions: {
@@ -53,10 +55,19 @@ export default defineConfig({
     },
     rollupOptions: {
       output: {
-        // Object form ensures recharts + ALL transitive D3 deps land in one chunk,
-        // preventing the "Cannot access 'X' before initialization" TDZ crash.
-        manualChunks: {
-          recharts: ["recharts"],
+        // Group recharts + ALL its transitive deps (victory-vendor, react-smooth,
+        // recharts-scale, d3-*) into one chunk so there are no cross-chunk
+        // circular-import TDZ crashes ("Cannot access 'X' before initialization").
+        manualChunks(id) {
+          if (
+            id.includes("recharts") ||
+            id.includes("victory-vendor") ||
+            id.includes("react-smooth") ||
+            id.includes("recharts-scale") ||
+            id.includes("/d3-")
+          ) {
+            return "recharts-vendor";
+          }
         },
       },
     },
