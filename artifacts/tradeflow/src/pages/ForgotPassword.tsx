@@ -25,12 +25,14 @@ export default function ForgotPassword() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
       });
-      const data = await res.json();
-      if (!res.ok) { setError(data.error || "Failed"); return; }
+      let data: Record<string, unknown> = {};
+      try { data = await res.json(); } catch { /* non-JSON */ }
+      if (!res.ok) { setError((data.error as string) || `Server error (${res.status})`); return; }
       setDone(true);
-      if (data.resetToken) setResetToken(data.resetToken);
-    } catch {
-      setError("Network error. Try again.");
+      if (data.resetToken) setResetToken(data.resetToken as string);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`Connection failed: ${msg}`);
     } finally {
       setLoading(false);
     }
