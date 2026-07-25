@@ -1,0 +1,86 @@
+Skip to content
+
+AI
+
+
+
+
+
+
+
+
+
+
+/login
+
+
+
+Pasted--Cloning-from-https-github-com-simeonadjei-trandeflow-C_1784954269013.txt
+CR
+create13xx
+create13xx
+12 minutes ago
+
+3 actions
+The GitHub repo is on an older commit that throws when BASE_PATH is missing. The quickest fix without needing to push to GitHub: add BASE_PATH to your Render static site's environment variables:
+
+Key	Value
+BASE_PATH	/
+Add that alongside VITE_API_URL and redeploy. That's all it needs.
+
+
+Worked for 22 seconds
+
+Checkpoint made
+11 minutes ago
+this email and password not working simeonadjei12015@gmail.com, bg262
+
+CR
+create13xx
+create13xx
+7 minutes ago
+
+4 actions
+Two issues:
+
+Password too short — bg262 is only 5 characters, but the app requires a minimum of 6. Registration would reject it silently on the frontend and show "Password must be at least 6 characters."
+
+Fresh database on Render — the deployed app has its own database with no users yet. Any account created in the Replit dev environment doesn't carry over.
+
+You need to register a new account on the deployed site first. Use a password that's at least 6 characters (e.g. bg2621), then log in with those same credentials.
+
+If you want to make yourself an admin, register first then let me know and I'll update your role in the database directly.
+
+
+Worked for 19 seconds
+trying to register says Network error. Please try again.
+
+CR
+create13xx
+create13xx
+6 minutes ago
+Debugging API connection errors
+
+Debugging API connection errors
+Are you testing on the Replit preview here, or on the deployed Render site? The fix is different for each:
+
+Replit preview — the API is running locally and should work. Let me check the API logs.
+Render deployed site — most likely the API service crashed (we saw the DATABASE_URL error earlier), or VITE_API_URL wasn't set before the static site was built so requests have nowhere to go.
+Which one are you on?
+
+
+Worked for 31 seconds
+Render
+
+CR
+create13xx
+create13xx
+4 minutes ago
+You've reached your monthly free quota limit. It will reset on August 22, 2026.
+
+
+Worked for 1 second
+Render Agent activity Agent activity
+
+Scroll to latest
+Guests can't use Agent in Starter Plan user's repls
