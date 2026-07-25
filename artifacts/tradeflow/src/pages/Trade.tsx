@@ -187,11 +187,16 @@ export default function Trade() {
     return () => clearInterval(iv);
   }, [isAdmin, token]);
 
-  const MIN_TRADE_BALANCE = 5;
+  // In real mode: use MEXC free USDT as the effective balance (min 1 USDT to start)
+  const MIN_TRADE_BALANCE_USDT = 1;
+  const realEffectiveBalance = account?.mexcConnected && account?.mexcFreeUsdt != null
+    ? account.mexcFreeUsdt
+    : (account?.balance ?? 0);
+  const realBalanceSufficient = realEffectiveBalance >= MIN_TRADE_BALANCE_USDT;
 
   const handleStartSession = async () => {
-    // Guard: must have at least GHS 5 in real balance before bot can run
-    if (!isDemo && (account?.balance ?? 0) < MIN_TRADE_BALANCE) {
+    // Guard: must have at least 1 USDT free on MEXC before bot can run
+    if (!isDemo && !realBalanceSufficient) {
       return; // button is disabled anyway, but belt-and-suspenders
     }
     setSessionLoading(true);
@@ -238,7 +243,11 @@ export default function Trade() {
   });
 
   const selectedAsset = assets?.find((a) => a.symbol === selectedSymbol);
-  const displayBalance = isDemo ? (account?.demoBalance ?? 0) : (account?.balance ?? 0);
+  // In real mode with MEXC connected, show free USDT as the display balance
+  const displayBalance = isDemo
+    ? (account?.demoBalance ?? 0)
+    : realEffectiveBalance;
+  const displayCurrency = isDemo ? "GHS" : (account?.mexcConnected ? "USDT" : "GHS");
   const modeTrades = trades?.filter((t) => (isDemo ? t.isDemo : !t.isDemo)) ?? [];
   const openTrades = modeTrades.filter((t) => t.status === "OPEN");
   const closedTrades = modeTrades.filter((t) => t.status !== "OPEN").slice(0, 15);
@@ -274,7 +283,7 @@ export default function Trade() {
           {/* Balance + session profit */}
           <div className="text-right">
             <div className={`font-bold text-sm ${isDemo ? "text-purple-300" : "text-primary"}`}>
-              GHS {displayBalance.toFixed(2)}
+              {displayCurrency} {displayBalance.toFixed(2)}
             </div>
             <div className="text-[10px] leading-none flex items-center justify-end gap-1">
               {!isDemo && session?.active && (
@@ -567,14 +576,14 @@ export default function Trade() {
               <div className="flex justify-between text-[11px] mt-1.5">
                 <span className="text-muted-foreground">Stake per trade:</span>
                 <span className="font-mono font-semibold text-foreground">
-                  GHS {((displayBalance * tradePercent) / 100).toFixed(2)}
+                  {displayCurrency} {((displayBalance * tradePercent) / 100).toFixed(2)}
                 </span>
               </div>
             </div>
 
             {/* Manual stake amount (for manual UP/DOWN buttons) */}
             <div className="mb-4">
-              <label className="text-xs text-muted-foreground font-medium mb-1.5 block">Manual Stake (GHS)</label>
+              <label className="text-xs text-muted-foreground font-medium mb-1.5 block">Manual Stake ({displayCurrency})</label>
               <input
                 type="number"
                 min={1}
@@ -709,20 +718,22 @@ export default function Trade() {
               )}
 
               {/* Low balance warning — shown instead of TRADE button in real mode */}
-              {!isDemo && !session?.active && (account?.balance ?? 0) < MIN_TRADE_BALANCE ? (
+              {!isDemo && !session?.active && !realBalanceSufficient ? (
                 <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4 text-center space-y-3">
-                  <p className="text-sm font-semibold text-yellow-400">Insufficient Balance</p>
+                  <p className="text-sm font-semibold text-yellow-400">Insufficient MEXC Balance</p>
                   <p className="text-xs text-muted-foreground">
-                    You need at least <span className="font-bold text-yellow-400">GHS {MIN_TRADE_BALANCE}.00</span> to start the bot.
-                    Your current balance is <span className="font-bold">GHS {(account?.balance ?? 0).toFixed(2)}</span>.
+                    You need at least <span className="font-bold text-yellow-400">{MIN_TRADE_BALANCE_USDT} USDT</span> free on MEXC to start the bot.
+                    Your current MEXC balance is <span className="font-bold">{realEffectiveBalance.toFixed(4)} USDT</span>.
                   </p>
-                  <Link
-                    href="/wallet?tab=deposit"
+                  <a
+                    href="https://www.mexc.com/assets/spot/deposit"
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-profit text-white text-xs font-bold hover:bg-profit/90 transition-colors"
                   >
                     <ArrowUpToLine className="w-3.5 h-3.5" />
-                    Deposit Now
-                  </Link>
+                    Deposit on MEXC
+                  </a>
                 </div>
               ) : !session?.active ? (
                 <button
