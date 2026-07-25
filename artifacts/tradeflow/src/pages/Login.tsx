@@ -23,12 +23,14 @@ export default function Login() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
-      const data = await res.json();
-      if (!res.ok) { setError(data.error || "Login failed"); return; }
-      login(data.token, data.user);
+      let data: Record<string, unknown> = {};
+      try { data = await res.json(); } catch { /* non-JSON response */ }
+      if (!res.ok) { setError((data.error as string) || `Server error (${res.status})`); return; }
+      login(data.token as string, data.user as Parameters<typeof login>[1]);
       navigate("/trade");
-    } catch {
-      setError("Network error. Please try again.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`Connection failed: ${msg}`);
     } finally {
       setLoading(false);
     }
