@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
 import { setBaseUrl } from "@workspace/api-client-react";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 // When deployed as a separate static site (e.g. Render), set VITE_API_URL to
 // the full URL of the API service (e.g. https://tradeflow-api.onrender.com).
@@ -12,4 +13,8 @@ if (apiUrl) {
   setBaseUrl(apiUrl);
 }
 
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>
+);

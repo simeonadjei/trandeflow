@@ -10,7 +10,7 @@ function isSupported() {
 }
 
 export function useNotifications() {
-  const granted = useRef(Notification.permission === "granted");
+  const granted = useRef(isSupported() && Notification.permission === "granted");
 
   const requestPermission = useCallback(async () => {
     if (!isSupported()) return false;
