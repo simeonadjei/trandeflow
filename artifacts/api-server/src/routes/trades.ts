@@ -3,22 +3,35 @@ import { db } from "@workspace/db";
 import { tradesTable, accountsTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { PlaceTradeBody, ToggleAutoInvestBody } from "@workspace/api-zod";
+import {
+  hasMexcCredentials,
+  getPrice as getMexcPrice,
+  getFreeBalance,
+  marketBuy,
+  marketSell,
+} from "../lib/mexcClient";
 
 const router = Router();
 
-const ASSET_PRICES: Record<string, number> = {
+// ── MEXC-tradeable symbols ────────────────────────────────────────────────────
+// Only UP trades on these symbols execute as real MEXC spot buy→sell.
+const MEXC_SYMBOL_MAP: Record<string, string> = {
+  BTCUSD: "BTCUSDT",
+  ETHUSD: "ETHUSDT",
+};
+
+// ── Simulated prices for demo / non-MEXC symbols ─────────────────────────────
+const SIM_PRICES: Record<string, number> = {
   EURUSD: 1.08542,
   BTCUSD: 67340.50,
   GBPUSD: 1.27180,
   ETHUSD: 3412.80,
   XAUUSD: 2318.40,
   USDJPY: 156.720,
-  AAPL: 189.50,
-  TSLA: 174.80,
 };
 
-function getPrice(symbol: string) {
-  const base = ASSET_PRICES[symbol] ?? 100;
+function getSimPrice(symbol: string) {
+  const base = SIM_PRICES[symbol] ?? 100;
   return base + (Math.random() - 0.5) * base * 0.001;
 }
 
@@ -58,80 +71,198 @@ router.post("/trades", async (req, res) => {
   try {
     const body = PlaceTradeBody.parse(req.body);
     const isDemo = body.isDemo ?? false;
-    const entryPrice = getPrice(body.symbol);
-    const payout = 100;
     const duration = body.duration ?? 60;
+    const payout = 100;
 
-    // Check balance
+    // Determine if this trade should execute on real MEXC
+    // Only UP direction trades on BTC/ETH can be executed as real spot buy→sell
+    const mexcPair = MEXC_SYMBOL_MAP[body.symbol];
+    const execOnMexc =
+      !isDemo &&
+      !!mexcPair &&
+      body.direction === "UP" &&
+      hasMexcCredentials();
+
     const account = await db.query.accountsTable.findFirst({
       where: eq(accountsTable.id, 1),
     });
     if (!account) return res.status(404).json({ error: "Account not found" });
 
-    const currentBalance = isDemo
-      ? parseFloat(account.demoBalance as string)
-      : parseFloat(account.balance as string);
-
-    if (body.amount > currentBalance) {
-      return res.status(400).json({ error: "Insufficient balance" });
+    // Balance check — only needed for simulated trades (real MEXC funds itself)
+    if (!execOnMexc) {
+      if (isDemo) {
+        const demoBalance = parseFloat(account.demoBalance as string);
+        if (body.amount > demoBalance) {
+          return res.status(400).json({ error: "Insufficient demo balance" });
+        }
+      } else if (hasMexcCredentials()) {
+        // Real mode with MEXC: check live USDT free balance
+        const freeUsdt = await getFreeBalance("USDT");
+        if (body.amount > freeUsdt) {
+          return res.status(400).json({
+            error: `Insufficient MEXC balance. Free: ${freeUsdt.toFixed(2)} USDT, needed: ${body.amount} USDT`,
+          });
+        }
+      } else {
+        const currentBalance = parseFloat(account.balance as string);
+        if (body.amount > currentBalance) {
+          return res.status(400).json({ error: "Insufficient balance" });
+        }
+      }
     }
 
-    const [trade] = await db.insert(tradesTable).values({
-      accountId: 1,
-      symbol: body.symbol,
-      direction: body.direction,
-      amount: body.amount.toString(),
-      duration,
-      entryPrice: entryPrice.toString(),
-      payout: payout.toString(),
-      status: "OPEN",
-      isAuto: false,
-      isDemo,
-    }).returning();
+    // ── Entry price ────────────────────────────────────────────────────────
+    let entryPrice: number;
+    let buyOrderId: string | undefined;
+    let baseQty = 0;
 
-    // Simulate trade close after duration
+    if (execOnMexc) {
+      // Get live MEXC price as entry reference
+      try {
+        entryPrice = await getMexcPrice(mexcPair);
+      } catch {
+        entryPrice = getSimPrice(body.symbol);
+      }
+      // Execute real MEXC market buy (spend body.amount USDT)
+      try {
+        const buy = await marketBuy(mexcPair, body.amount);
+        buyOrderId = buy.orderId;
+        baseQty = buy.baseQty;
+        entryPrice = buy.avgPrice;
+        req.log.info(
+          { pair: mexcPair, spent: body.amount, baseQty, entryPrice, orderId: buy.orderId },
+          "Manual MEXC market buy executed"
+        );
+      } catch (e) {
+        req.log.error(e, "MEXC manual buy failed");
+        return res.status(502).json({
+          error: `MEXC buy failed: ${(e as Error).message}`,
+        });
+      }
+    } else {
+      entryPrice = getSimPrice(body.symbol);
+    }
+
+    // ── Record trade ────────────────────────────────────────────────────────
+    const [trade] = await db
+      .insert(tradesTable)
+      .values({
+        accountId: 1,
+        symbol: body.symbol,
+        direction: body.direction,
+        amount: body.amount.toString(),
+        duration,
+        entryPrice: entryPrice.toString(),
+        payout: payout.toString(),
+        status: "OPEN",
+        isAuto: false,
+        isDemo,
+        buyOrderId: buyOrderId ?? null,
+      })
+      .returning();
+
+    // ── Schedule close after duration ───────────────────────────────────────
     setTimeout(async () => {
       try {
-        const exitPrice = getPrice(body.symbol);
-        const won = body.direction === "UP"
-          ? exitPrice > entryPrice
-          : exitPrice < entryPrice;
-        const profit = won
-          ? parseFloat(body.amount.toString()) * (payout / 100)
-          : -parseFloat(body.amount.toString());
+        let exitPrice: number;
+        let profitOrLoss: number;
+
+        if (execOnMexc && baseQty > 0) {
+          // Real MEXC market sell — get back USDT for the crypto we bought
+          const sell = await marketSell(mexcPair, baseQty);
+          exitPrice = sell.avgPrice;
+          profitOrLoss = parseFloat((sell.quoteQty - body.amount).toFixed(4));
+          req.log.info(
+            { pair: mexcPair, received: sell.quoteQty, stake: body.amount, profit: profitOrLoss },
+            "Manual MEXC market sell executed"
+          );
+        } else {
+          // Simulated: UP wins if price went up, DOWN wins if price went down
+          exitPrice = getSimPrice(body.symbol);
+          const won =
+            body.direction === "UP"
+              ? exitPrice > entryPrice
+              : exitPrice < entryPrice;
+          profitOrLoss = won
+            ? body.amount * (payout / 100)
+            : -body.amount;
+        }
+
+        const won = profitOrLoss > 0;
         const status = won ? "WIN" : "LOSS";
 
-        await db.update(tradesTable)
-          .set({ exitPrice: exitPrice.toString(), profit: profit.toString(), status, closedAt: new Date() })
+        await db
+          .update(tradesTable)
+          .set({
+            exitPrice: exitPrice.toString(),
+            profit: profitOrLoss.toFixed(4),
+            status,
+            closedAt: new Date(),
+          })
           .where(eq(tradesTable.id, trade.id));
 
-        // Update the right balance
-        const fresh = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
+        // Update account stats
+        const fresh = await db.query.accountsTable.findFirst({
+          where: eq(accountsTable.id, 1),
+        });
         if (fresh) {
+          const newTotal = fresh.totalTrades + 1;
+          const prevWins = Math.round(
+            (parseFloat(fresh.winRate as string) * fresh.totalTrades) / 100
+          );
+          const newWinRate = ((prevWins + (won ? 1 : 0)) / newTotal) * 100;
+
           if (isDemo) {
-            const newDemo = Math.max(0, parseFloat(fresh.demoBalance as string) + profit);
-            await db.update(accountsTable)
-              .set({ demoBalance: newDemo.toFixed(2) })
-              .where(eq(accountsTable.id, 1));
-          } else {
-            const newBalance = parseFloat(fresh.balance as string) + profit;
-            const newTotal = fresh.totalTrades + 1;
-            const wins = Math.round(parseFloat(fresh.winRate as string) * fresh.totalTrades / 100) + (won ? 1 : 0);
-            const newWinRate = (wins / newTotal) * 100;
-            const newProfit = parseFloat(fresh.totalProfit as string) + profit;
-            await db.update(accountsTable)
+            const newDemo = Math.max(
+              0,
+              parseFloat(fresh.demoBalance as string) + profitOrLoss
+            );
+            await db
+              .update(accountsTable)
               .set({
-                balance: Math.max(0, newBalance).toFixed(2),
+                demoBalance: newDemo.toFixed(2),
                 totalTrades: newTotal,
                 winRate: newWinRate.toFixed(2),
-                totalProfit: newProfit.toFixed(2),
               })
               .where(eq(accountsTable.id, 1));
-
+          } else if (execOnMexc) {
+            // MEXC real trade — track P&L in realizedPnlUsd
+            const newPnl = parseFloat(
+              (parseFloat(fresh.realizedPnlUsd as string) + profitOrLoss).toFixed(4)
+            );
+            const newProfit = parseFloat(
+              (parseFloat(fresh.totalProfit as string) + profitOrLoss).toFixed(4)
+            );
+            await db
+              .update(accountsTable)
+              .set({
+                totalTrades: newTotal,
+                winRate: newWinRate.toFixed(2),
+                realizedPnlUsd: newPnl.toFixed(4),
+                totalProfit: newProfit.toFixed(4),
+              })
+              .where(eq(accountsTable.id, 1));
+          } else {
+            // Simulated non-demo: internal balance
+            const newBalance = Math.max(
+              0,
+              parseFloat(fresh.balance as string) + profitOrLoss
+            );
+            await db
+              .update(accountsTable)
+              .set({
+                balance: newBalance.toFixed(2),
+                totalTrades: newTotal,
+                winRate: newWinRate.toFixed(2),
+                totalProfit: (
+                  parseFloat(fresh.totalProfit as string) + profitOrLoss
+                ).toFixed(2),
+              })
+              .where(eq(accountsTable.id, 1));
           }
         }
       } catch (_e) {
-        // ignore background errors
+        // background errors — log only
       }
     }, duration * 1000);
 
@@ -145,7 +276,8 @@ router.post("/trades", async (req, res) => {
 router.post("/trades/auto", async (req, res) => {
   try {
     const body = ToggleAutoInvestBody.parse(req.body);
-    await db.update(accountsTable)
+    await db
+      .update(accountsTable)
       .set({
         autoInvestEnabled: body.enabled,
         autoInvestStake: (body.stakeAmount ?? 10).toString(),
@@ -153,7 +285,9 @@ router.post("/trades/auto", async (req, res) => {
       })
       .where(eq(accountsTable.id, 1));
 
-    const account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
+    const account = await db.query.accountsTable.findFirst({
+      where: eq(accountsTable.id, 1),
+    });
 
     res.json({
       enabled: account?.autoInvestEnabled ?? body.enabled,
@@ -169,7 +303,9 @@ router.post("/trades/auto", async (req, res) => {
 
 router.get("/trades/auto/status", async (req, res) => {
   try {
-    const account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
+    const account = await db.query.accountsTable.findFirst({
+      where: eq(accountsTable.id, 1),
+    });
     res.json({
       enabled: account?.autoInvestEnabled ?? false,
       stakeAmount: parseFloat(account?.autoInvestStake as string ?? "10"),

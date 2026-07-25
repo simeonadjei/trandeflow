@@ -604,12 +604,12 @@ export default function Trade() {
               </div>
             </div>
 
-            {/* Payout — always 1 min, 100% payout */}
+            {/* Payout info */}
             {selectedAsset && (
               <div className="bg-profit/10 border border-profit/20 rounded-lg p-3 mb-4 text-sm">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">If you win:</span>
-                  <span className="font-bold text-profit">+GHS {amount.toFixed(2)}</span>
+                  <span className="font-bold text-profit">+{displayCurrency} {amount.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between mt-1">
                   <span className="text-muted-foreground">Duration · Payout:</span>
@@ -618,8 +618,53 @@ export default function Trade() {
               </div>
             )}
 
-              {/* ── TRADE / STOP Button ── */}
-            <div className="mt-2 space-y-3">
+            {/* ── Manual UP / DOWN trade buttons ── */}
+            {(() => {
+              const isMexcSymbol = selectedSymbol === "BTCUSD" || selectedSymbol === "ETHUSD";
+              const hasBalance = displayBalance >= amount && displayBalance > 0;
+              const isRealMexc = !isDemo && account?.mexcConnected;
+              const upIsReal = isRealMexc && isMexcSymbol;
+              return (
+                <div className="mb-4 space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => handleTrade("UP")}
+                      disabled={placeTrade.isPending || !hasBalance}
+                      className="py-3 rounded-xl font-black text-sm tracking-wide bg-profit hover:bg-profit/90 text-white transition-all disabled:opacity-40 flex flex-col items-center justify-center gap-0.5 shadow-md shadow-profit/20"
+                    >
+                      <TrendingUp className="w-4 h-4" />
+                      <span>▲ UP</span>
+                      {upIsReal && (
+                        <span className="text-[9px] font-normal opacity-80">Real MEXC</span>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => handleTrade("DOWN")}
+                      disabled={placeTrade.isPending || !hasBalance}
+                      className="py-3 rounded-xl font-black text-sm tracking-wide bg-loss hover:bg-loss/90 text-white transition-all disabled:opacity-40 flex flex-col items-center justify-center gap-0.5 shadow-md shadow-loss/20"
+                    >
+                      <TrendingDown className="w-4 h-4" />
+                      <span>▼ DOWN</span>
+                      {isRealMexc && isMexcSymbol && (
+                        <span className="text-[9px] font-normal opacity-80">Simulated</span>
+                      )}
+                    </button>
+                  </div>
+                  {!hasBalance && (
+                    <p className="text-[11px] text-center text-yellow-400">
+                      {isRealMexc
+                        ? `Need ≥ ${amount} USDT free on MEXC to trade`
+                        : isDemo
+                        ? `Need ≥ ${displayCurrency} ${amount} demo balance`
+                        : `Insufficient balance`}
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* ── Bot TRADE / STOP Button ── */}
+            <div className="border-t border-border pt-3 mt-1 space-y-3">
 
               {/* Signal strength bars — only show when session active */}
               {session?.active && session?.phase !== "idle" && (
@@ -717,46 +762,50 @@ export default function Trade() {
                 </div>
               )}
 
-              {/* Low balance warning — shown instead of TRADE button in real mode */}
-              {!isDemo && !session?.active && !realBalanceSufficient ? (
-                <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4 text-center space-y-3">
-                  <p className="text-sm font-semibold text-yellow-400">Insufficient MEXC Balance</p>
-                  <p className="text-xs text-muted-foreground">
-                    You need at least <span className="font-bold text-yellow-400">{MIN_TRADE_BALANCE_USDT} USDT</span> free on MEXC to start the bot.
-                    Your current MEXC balance is <span className="font-bold">{realEffectiveBalance.toFixed(4)} USDT</span>.
-                  </p>
-                  <a
-                    href="https://www.mexc.com/assets/spot/deposit"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-profit text-white text-xs font-bold hover:bg-profit/90 transition-colors"
-                  >
-                    <ArrowUpToLine className="w-3.5 h-3.5" />
-                    Deposit on MEXC
-                  </a>
+              {/* Low balance warning — shown alongside TRADE button, not instead of it */}
+              {!isDemo && !session?.active && !realBalanceSufficient && (
+                <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-3 flex items-start gap-2">
+                  <span className="text-yellow-400 text-sm mt-0.5">⚠</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-yellow-400">Low MEXC Balance</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Need ≥ {MIN_TRADE_BALANCE_USDT} USDT free on MEXC to run the bot.
+                      Current: <span className="font-bold text-foreground">{realEffectiveBalance.toFixed(4)} USDT</span>
+                    </p>
+                    <a
+                      href="https://www.mexc.com/assets/spot/deposit"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 mt-1.5 text-[11px] font-bold text-profit hover:underline"
+                    >
+                      <ArrowUpToLine className="w-3 h-3" /> Deposit on MEXC
+                    </a>
+                  </div>
                 </div>
-              ) : !session?.active ? (
+              )}
+
+              {!session?.active ? (
                 <button
                   onClick={handleStartSession}
-                  disabled={sessionLoading || isDemo}
-                  className="w-full py-4 rounded-xl font-black text-base tracking-wide bg-profit hover:bg-profit/90 text-white transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-profit/20"
+                  disabled={sessionLoading || isDemo || (!isDemo && !realBalanceSufficient)}
+                  className="w-full py-3.5 rounded-xl font-black text-sm tracking-wide bg-primary hover:bg-primary/90 text-primary-foreground transition-all disabled:opacity-40 flex items-center justify-center gap-2 shadow-lg shadow-primary/20"
                 >
-                  <Activity className="w-5 h-5" />
-                  {sessionLoading ? "Starting…" : isDemo ? "TRADE (Real mode only)" : "TRADE"}
+                  <Activity className="w-4 h-4" />
+                  {sessionLoading ? "Starting…" : "START AUTO BOT"}
                 </button>
               ) : (
                 <button
                   onClick={handleStopSession}
                   disabled={sessionLoading}
-                  className="w-full py-4 rounded-xl font-black text-base tracking-wide bg-loss hover:bg-loss/90 text-white transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-loss/20"
+                  className="w-full py-3.5 rounded-xl font-black text-sm tracking-wide bg-loss hover:bg-loss/90 text-white transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-loss/20"
                 >
-                  <StopCircle className="w-5 h-5" />
-                  {sessionLoading ? "Stopping…" : "STOP"}
+                  <StopCircle className="w-4 h-4" />
+                  {sessionLoading ? "Stopping…" : "STOP BOT"}
                 </button>
               )}
 
               {isDemo && (
-                <p className="text-center text-xs text-muted-foreground">Switch to <strong className="text-foreground">Real</strong> mode to use the bot</p>
+                <p className="text-center text-xs text-muted-foreground">Bot runs in <strong className="text-foreground">Real</strong> mode only. Use UP/DOWN above to trade in demo.</p>
               )}
             </div>
           </div>
