@@ -4,11 +4,11 @@ import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
-// PORT and BASE_PATH are injected by Replit workflows; fall back to safe
-// defaults so `vite build` works in CI / Render static builds.
+// PORT and BASE_PATH are injected by Replit workflows.
+// Outside Replit (e.g. Render static builds) always use "/" so asset paths are correct.
 const rawPort = process.env.PORT ?? "3000";
 const port = Number(rawPort);
-const basePath = process.env.BASE_PATH ?? "/";
+const basePath = process.env.REPL_ID ? (process.env.BASE_PATH ?? "/") : "/";
 
 export default defineConfig({
   base: basePath,
