@@ -46,8 +46,11 @@ export default defineConfig({
     include: ["recharts", "victory-vendor", "react-smooth"],
   },
   build: {
-    // esnext target avoids down-compilation that introduces TDZ in circular ESM deps
     target: "esnext",
+    // Minification (esbuild/terser) reorders ESM const declarations and triggers
+    // TDZ crashes in recharts/victory-vendor circular imports. Disabling it is
+    // the guaranteed fix; bundle size is acceptable for a trading dashboard.
+    minify: false,
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
     commonjsOptions: {
@@ -55,9 +58,6 @@ export default defineConfig({
     },
     rollupOptions: {
       output: {
-        // Group recharts + ALL its transitive deps (victory-vendor, react-smooth,
-        // recharts-scale, d3-*) into one chunk so there are no cross-chunk
-        // circular-import TDZ crashes ("Cannot access 'X' before initialization").
         manualChunks(id) {
           if (
             id.includes("recharts") ||
