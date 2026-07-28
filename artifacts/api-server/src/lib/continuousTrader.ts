@@ -29,7 +29,7 @@ const STOP_LOSS_PCT     = 0.004;   // -0.4%
 const PRE_TRADE_SECS    = 5;       // countdown before order fires (for UI)
 const MIN_SCORE         = 5;       // out of 8 indicators
 const MIN_LEAD          = 2;       // winner must lead by this many points
-const MIN_STAKE_USDT    = 5;   // MEXC minimum notional per order
+const MIN_STAKE_USDT    = 1;   // minimum stake in USDT
 
 // ─── Session status ───────────────────────────────────────────────────────────
 export interface SessionStatus {
