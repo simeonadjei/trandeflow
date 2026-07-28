@@ -78,14 +78,14 @@ function scoreUp(candles: Candle[]): number {
   const greenCnt = recent.filter(c => c.close > c.open).length;
 
   return [
-    rsi <= 55,                       // 1. RSI not overbought
+    rsi >= 40 && rsi <= 65,          // 1. RSI in momentum zone (building up, not overbought)
     last.close > last.open,          // 2. Bullish candle
     greenCnt >= 3,                   // 3. 3 of last 5 candles green
     bodyLast >= bodyPrev * 0.5,      // 4. Body size maintained
     wickDown >= wickUp * 0.5,        // 5. Buying pressure
     last.close > sma10,              // 6. Price above SMA10
-    last.low  >= prev.low  * 0.999,  // 7. Higher low
-    prev.low  >= prev2.low * 0.999,  // 8. Sustained higher lows
+    last.low  >= prev.low,           // 7. Strict higher low (no tolerance)
+    prev.low  >= prev2.low,          // 8. Strict sustained higher lows
   ].filter(Boolean).length;
 }
 
@@ -110,10 +110,10 @@ async function findBestSignal(): Promise<{ asset: string; score: number } | null
 
 // ─── Tunables ─────────────────────────────────────────────────────────────
 const SCAN_INTERVAL_MS  = 5_000;
-const TRADE_WINDOW_MS   = 30_000;  // hold up to 30 s
-const CHECK_INTERVAL_MS = 2_000;
-const TAKE_PROFIT_PCT   = 0.003;   // +0.3 %
-const STOP_LOSS_PCT     = 0.003;   // -0.3 %
+const TRADE_WINDOW_MS   = 300_000; // hold up to 5 min (signals are on 1-min candles; 30 s was too short)
+const CHECK_INTERVAL_MS = 5_000;   // check every 5 s during hold
+const TAKE_PROFIT_PCT   = 0.008;   // +0.8 % (covers 0.2 % round-trip fees + real profit margin)
+const STOP_LOSS_PCT     = 0.004;   // -0.4 % (slightly wider than fees so a bad fill doesn't auto-stop)
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
