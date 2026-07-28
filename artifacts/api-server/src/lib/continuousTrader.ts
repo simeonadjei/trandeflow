@@ -1,13 +1,14 @@
 /**
- * Continuous Trading Engine — Real MEXC spot execution
- * ─────────────────────────────────────────────────────
- * Scans BTCUSDT / ETHUSDT via MEXC public API.
- * On a 6/8+ bullish signal it places a REAL market buy on MEXC,
- * monitors the position, and exits (real market sell) when:
- *   - signal reverses, take-profit hits, stop-loss hits, or window expires.
+ * Continuous Trading Engine — Prediction-based MEXC spot execution
+ * ──────────────────────────────────────────────────────────────────
+ * Strategy: make a single directional prediction using 15-minute candles
+ * for the trend backbone + 1-minute candles for entry timing.
  *
- * Stake is taken from the user's live MEXC USDT balance.
- * Trade results are recorded in the internal DB for history / analytics.
+ * Unlike the old approach (which required a live 6/8 score to stay true),
+ * the prediction is committed at analysis time and doesn't flicker.
+ * The bot then holds up to 5 minutes and exits on TP, SL, or window expiry.
+ *
+ * Entry criteria: upScore OR downScore >= 5/8, AND winner leads by >= 2 points.
  */
 
 import { db } from "@workspace/db";
@@ -19,22 +20,33 @@ import {
   marketBuy, marketSell, type Candle,
 } from "./mexcClient";
 
-// ─── Tunables (declared first so _s initialiser can reference them) ──────
-const SCAN_INTERVAL_MS  = 5_000;
+// ─── Tunables ────────────────────────────────────────────────────────────────
+const SCAN_INTERVAL_MS  = 10_000;  // pause between scans when no signal
 const TRADE_WINDOW_MS   = 300_000; // hold up to 5 min
-const CHECK_INTERVAL_MS = 5_000;
-const TAKE_PROFIT_PCT   = 0.008;   // +0.8 %
-const STOP_LOSS_PCT     = 0.004;   // -0.4 %
+const CHECK_INTERVAL_MS = 5_000;   // how often to check TP/SL during hold
+const TAKE_PROFIT_PCT   = 0.008;   // +0.8%
+const STOP_LOSS_PCT     = 0.004;   // -0.4%
+const PRE_TRADE_SECS    = 5;       // countdown before order fires (for UI)
+const MIN_SCORE         = 5;       // out of 8 indicators
+const MIN_LEAD          = 2;       // winner must lead by this many points
+const MIN_STAKE_USDT    = 1;
 
-// ─── Session status ───────────────────────────────────────────────────────
+// ─── Session status ───────────────────────────────────────────────────────────
 export interface SessionStatus {
   active:           boolean;
   stake:            number;
   tradePercent:     number;
-  phase:            "idle" | "analyzing" | "trading" | "waiting" | "error";
+  phase:            "idle" | "analyzing" | "pre-trade" | "trading" | "waiting" | "error";
   asset:            string;
-  direction:        "UP" | null;
+  direction:        "UP" | "DOWN" | null;
+  /** UP indicators fired out of 8 */
   upScore:          number;
+  /** DOWN indicators fired out of 8 */
+  downScore:        number;
+  /** 0-100 confidence derived from winning score */
+  winConfidence:    number;
+  /** Seconds until the pre-trade countdown fires the order */
+  preTradeIn:       number;
   lastResult:       "WIN" | "LOSS" | "DRAW" | null;
   lastProfit:       number;
   sessionTrades:    number;
@@ -43,25 +55,35 @@ export interface SessionStatus {
   message:          string;
   /** Unix ms when the current open trade was placed. Null when not in trading phase. */
   tradeStartedAt:   number | null;
-  /** Max hold window in ms — lets the frontend compute % elapsed without hardcoding it. */
+  /** Max hold window in ms — lets the frontend compute % elapsed. */
   tradeWindowMs:    number;
 }
 
 let _s: SessionStatus = {
-  active: false, stake: 0, tradePercent: 50, phase: "idle",
-  asset: "—", direction: null, upScore: 0,
+  active: false, stake: 0, tradePercent: 50,
+  phase: "idle", asset: "—", direction: null,
+  upScore: 0, downScore: 0, winConfidence: 0, preTradeIn: 0,
   lastResult: null, lastProfit: 0,
   sessionTrades: 0, sessionWins: 0, sessionProfit: 0,
   message: "Ready",
   tradeStartedAt: null, tradeWindowMs: TRADE_WINDOW_MS,
 };
 
-// Balance recorded at session start — used for % loss-limit check
 let _sessionStartBalanceUsdt: number | null = null;
 
 export function getSessionStatus(): SessionStatus { return { ..._s }; }
 
-// ─── RSI ─────────────────────────────────────────────────────────────────
+// ─── Indicators ──────────────────────────────────────────────────────────────
+
+/** Exponential moving average */
+function ema(values: number[], period: number): number {
+  const k = 2 / (period + 1);
+  let e = values[0];
+  for (let i = 1; i < values.length; i++) e = values[i] * k + e * (1 - k);
+  return e;
+}
+
+/** Standard RSI over last `period+1` closes */
 function calcRSI(candles: Candle[], period = 14): number {
   const slice = candles.slice(-(period + 1));
   let gains = 0, losses = 0;
@@ -73,48 +95,143 @@ function calcRSI(candles: Candle[], period = 14): number {
   return Math.round(100 - 100 / (1 + gains / losses));
 }
 
-// ─── 8-condition UP scorer ──────────────────────────────────────────────
-function scoreUp(candles: Candle[]): number {
-  if (candles.length < 12) return 0;
-  const last   = candles[candles.length - 1];
-  const prev   = candles[candles.length - 2];
-  const prev2  = candles[candles.length - 3];
-  const recent = candles.slice(-5);
+// ─── Core prediction ──────────────────────────────────────────────────────────
 
-  const rsi      = calcRSI(candles);
-  const sma10    = candles.slice(-10).reduce((s, c) => s + c.close, 0) / 10;
-  const bodyLast = Math.abs(last.close - last.open);
-  const bodyPrev = Math.abs(prev.close - prev.open);
-  const wickDown = Math.min(last.open, last.close) - last.low;
-  const wickUp   = last.high - Math.max(last.open, last.close);
-  const greenCnt = recent.filter(c => c.close > c.open).length;
-
-  return [
-    rsi >= 40 && rsi <= 65,          // 1. RSI in momentum zone (building up, not overbought)
-    last.close > last.open,          // 2. Bullish candle
-    greenCnt >= 3,                   // 3. 3 of last 5 candles green
-    bodyLast >= bodyPrev * 0.5,      // 4. Body size maintained
-    wickDown >= wickUp * 0.5,        // 5. Buying pressure
-    last.close > sma10,              // 6. Price above SMA10
-    last.low  >= prev.low,           // 7. Strict higher low (no tolerance)
-    prev.low  >= prev2.low,          // 8. Strict sustained higher lows
-  ].filter(Boolean).length;
+interface Prediction {
+  direction:  "UP" | "DOWN";
+  upScore:    number;
+  downScore:  number;
+  confidence: number;
+  reason:     string;
 }
 
-// ─── MEXC spot pairs ──────────────────────────────────────────────────────
-const ASSETS = ["BTCUSDT", "ETHUSDT"];
-const MIN_SCORE      = 6;      // require 6/8 conditions
-const MIN_STAKE_USDT = 1;      // minimum USDT trade size
+/**
+ * Fetches 15-minute candles (trend backbone) and 1-minute candles (entry timing),
+ * then scores 8 indicators for UP and 8 for DOWN independently.
+ * Returns a Prediction if the winning direction has ≥ MIN_SCORE and leads by ≥ MIN_LEAD,
+ * otherwise null (no trade this cycle).
+ */
+async function predictDirection(symbol: string): Promise<Prediction | null> {
+  const [candles15m, candles1m] = await Promise.all([
+    getKlines(symbol, 24, "15m"),  // 24 × 15min = 6 hours of context
+    getKlines(symbol, 30, "1m"),   // 30 × 1min  = 30 min entry timing
+  ]);
 
-async function findBestSignal(): Promise<{ asset: string; score: number } | null> {
-  let best: { asset: string; score: number } | null = null;
-  for (const asset of ASSETS) {
-    try {
-      const candles = await getKlines(asset, 30);
-      const score   = scoreUp(candles);
-      if (!best || score > best.score) best = { asset, score };
-    } catch (e) {
-      logger.warn({ asset, err: (e as Error).message }, "CT: klines fetch failed, skipping");
+  if (candles15m.length < 22 || candles1m.length < 10) return null;
+
+  const closes15 = candles15m.map(c => c.close);
+  const rsiNow   = calcRSI(candles15m, 14);
+  // RSI 3 periods back — tells us if momentum is rising or falling
+  const rsiPrev  = calcRSI(candles15m.slice(0, -3), 14);
+  const ema9     = ema(closes15, 9);
+  const ema21    = ema(closes15, 21);
+
+  const last3_15 = candles15m.slice(-3);
+  const last6_15 = candles15m.slice(-6);
+  const last4_15 = candles15m.slice(-4);
+
+  // Price structure on 15m
+  const higherHighs = last3_15[1].high > last3_15[0].high && last3_15[2].high > last3_15[1].high;
+  const lowerHighs  = last3_15[1].high < last3_15[0].high && last3_15[2].high < last3_15[1].high;
+  const higherLows  = last3_15[1].low  > last3_15[0].low  && last3_15[2].low  > last3_15[1].low;
+  const lowerLows   = last3_15[1].low  < last3_15[0].low  && last3_15[2].low  < last3_15[1].low;
+
+  const greenCount15 = last6_15.filter(c => c.close > c.open).length;
+  const redCount15   = last6_15.length - greenCount15;
+
+  // Net % change across last 4 × 15m candles (momentum)
+  const netChange15 = (last4_15[3].close - last4_15[0].open) / last4_15[0].open;
+
+  // 1-minute entry timing
+  const rsi1m     = calcRSI(candles1m, 14);
+  const last3_1m  = candles1m.slice(-3);
+  const green1m   = last3_1m.filter(c => c.close > c.open).length;
+  const red1m     = last3_1m.length - green1m;
+
+  // ── Score each of the 8 indicators ────────────────────────────────────────
+  let upScore = 0, downScore = 0;
+  const upReasons:   string[] = [];
+  const downReasons: string[] = [];
+
+  // 1. EMA9 vs EMA21 (15m trend direction)
+  if (ema9 > ema21) { upScore++;   upReasons.push("EMA9>EMA21"); }
+  else              { downScore++; downReasons.push("EMA9<EMA21"); }
+
+  // 2. RSI zone (15m): 40-65 bullish territory; above 65 overbought → bearish
+  if (rsiNow >= 40 && rsiNow <= 65) { upScore++;   upReasons.push(`RSI ${rsiNow}`); }
+  else if (rsiNow > 65)             { downScore++; downReasons.push(`RSI ${rsiNow} overbought`); }
+  else                              { downScore++; downReasons.push(`RSI ${rsiNow} weak`); }
+
+  // 3. RSI direction (15m): is momentum building or fading?
+  if (rsiNow > rsiPrev + 2)      { upScore++;   upReasons.push("RSI rising"); }
+  else if (rsiNow < rsiPrev - 2) { downScore++; downReasons.push("RSI falling"); }
+  // else neutral — no point awarded
+
+  // 4. Higher highs structure (15m)
+  if (higherHighs) { upScore++;   upReasons.push("higher highs"); }
+  if (lowerHighs)  { downScore++; downReasons.push("lower highs"); }
+
+  // 5. Higher/lower lows structure (15m)
+  if (higherLows) { upScore++;   upReasons.push("higher lows"); }
+  if (lowerLows)  { downScore++; downReasons.push("lower lows"); }
+
+  // 6. 15m candle majority (4 of last 6 green/red)
+  if (greenCount15 >= 4) { upScore++;   upReasons.push(`${greenCount15}/6 green`); }
+  if (redCount15   >= 4) { downScore++; downReasons.push(`${redCount15}/6 red`); }
+
+  // 7. 4-bar momentum direction (15m)
+  if (netChange15 > 0.001)       { upScore++;   upReasons.push(`momentum +${(netChange15 * 100).toFixed(2)}%`); }
+  else if (netChange15 < -0.001) { downScore++; downReasons.push(`momentum ${(netChange15 * 100).toFixed(2)}%`); }
+
+  // 8. 1m entry confirmation (RSI + candle direction)
+  if (rsi1m >= 40 && rsi1m <= 70 && green1m >= 2) { upScore++;   upReasons.push("1m confirms UP"); }
+  if (rsi1m <= 60 && rsi1m >= 30 && red1m   >= 2) { downScore++; downReasons.push("1m confirms DOWN"); }
+
+  // ── Decision ──────────────────────────────────────────────────────────────
+  if (upScore >= MIN_SCORE && upScore - downScore >= MIN_LEAD) {
+    return {
+      direction:  "UP",
+      upScore,
+      downScore,
+      confidence: Math.round((upScore / 8) * 100),
+      reason:     upReasons.join(", "),
+    };
+  }
+  if (downScore >= MIN_SCORE && downScore - upScore >= MIN_LEAD) {
+    return {
+      direction:  "DOWN",
+      upScore,
+      downScore,
+      confidence: Math.round((downScore / 8) * 100),
+      reason:     downReasons.join(", "),
+    };
+  }
+  return null; // no confident prediction this cycle
+}
+
+// ─── Multi-asset scan ────────────────────────────────────────────────────────
+const ASSETS = ["BTCUSDT", "ETHUSDT"];
+
+interface BestSignal {
+  asset:      string;
+  prediction: Prediction;
+}
+
+async function findBestPrediction(): Promise<BestSignal | null> {
+  const results = await Promise.allSettled(
+    ASSETS.map(async (asset) => {
+      const p = await predictDirection(asset);
+      return p ? { asset, prediction: p } : null;
+    })
+  );
+
+  let best: BestSignal | null = null;
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value) {
+      const sig = r.value;
+      if (!best || sig.prediction.confidence > best.prediction.confidence) {
+        best = sig;
+      }
     }
   }
   return best;
@@ -122,7 +239,7 @@ async function findBestSignal(): Promise<{ asset: string; score: number } | null
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
-// ─── Main loop ────────────────────────────────────────────────────────────
+// ─── Main loop ────────────────────────────────────────────────────────────────
 let _loopRunning = false;
 
 async function isEnabled(): Promise<boolean> {
@@ -151,59 +268,68 @@ async function loop() {
     _s.tradePercent    = tradePercent;
 
     // ── Balance loss-limit check ───────────────────────────────────────────
-    // dailyLossLimit stores a percentage (0 = disabled, e.g. 40 = stop at -40%)
     const lossLimitPct = parseFloat((account?.dailyLossLimit as string) ?? "0");
     if (lossLimitPct > 0 && _sessionStartBalanceUsdt !== null && _sessionStartBalanceUsdt > 0) {
-      let currentBalanceForCheck: number;
-      try {
-        currentBalanceForCheck = await getFreeBalance("USDT");
-      } catch {
-        currentBalanceForCheck = _sessionStartBalanceUsdt; // can't check — skip this iteration
-      }
-      const dropPct = (_sessionStartBalanceUsdt - currentBalanceForCheck) / _sessionStartBalanceUsdt * 100;
+      let current: number;
+      try { current = await getFreeBalance("USDT"); }
+      catch { current = _sessionStartBalanceUsdt; }
+      const dropPct = (_sessionStartBalanceUsdt - current) / _sessionStartBalanceUsdt * 100;
       if (dropPct >= lossLimitPct) {
-        logger.warn(
-          { startBalance: _sessionStartBalanceUsdt, currentBalance: currentBalanceForCheck, dropPct, lossLimitPct },
-          "CT: balance loss limit reached — stopping session",
-        );
+        logger.warn({ dropPct, lossLimitPct }, "CT: balance loss limit reached — stopping");
         await db.update(accountsTable).set({ autoInvestEnabled: false }).where(eq(accountsTable.id, 1));
-        _s.active  = false;
-        _s.phase   = "idle";
-        _s.message = `Loss limit hit: balance dropped ${dropPct.toFixed(1)}% (from ${_sessionStartBalanceUsdt.toFixed(2)} → ${currentBalanceForCheck.toFixed(2)} USDT). Session stopped.`;
+        _s.active = false; _s.phase = "idle";
+        _s.message = `Loss limit hit: balance dropped ${dropPct.toFixed(1)}%. Session stopped.`;
         _loopRunning = false;
         return;
       }
     }
 
-    // ── Scan ──────────────────────────────────────────────────────────────
+    // ── Prediction scan ───────────────────────────────────────────────────
     _s.phase   = "analyzing";
-    _s.message = "Scanning BTCUSDT / ETHUSDT on MEXC…";
+    _s.message = "Analysing 15m trend + 1m entry on BTCUSDT / ETHUSDT…";
 
-    let best: { asset: string; score: number } | null;
+    let best: BestSignal | null;
     try {
-      best = await findBestSignal();
+      best = await findBestPrediction();
     } catch (e) {
-      logger.error(e, "CT: scan failed");
+      logger.error(e, "CT: prediction scan failed");
       _s.phase = "error"; _s.message = "Scan failed, retrying…";
       await sleep(SCAN_INTERVAL_MS);
       continue;
     }
 
-    if (!best || best.score < MIN_SCORE) {
-      _s.asset     = best?.asset ?? "—";
-      _s.upScore   = best?.score ?? 0;
-      _s.direction = null;
-      _s.phase     = "waiting";
-      _s.message   = `Signal ${best?.score ?? 0}/8 on ${best?.asset ?? "—"} — need ${MIN_SCORE}/8, scanning again…`;
+    if (!best) {
+      _s.upScore      = 0;
+      _s.downScore    = 0;
+      _s.winConfidence = 0;
+      _s.direction    = null;
+      _s.phase        = "waiting";
+      _s.message      = "No confident prediction yet — waiting for 15m trend clarity…";
       await sleep(SCAN_INTERVAL_MS);
       continue;
     }
 
-    _s.asset     = best.asset;
-    _s.upScore   = best.score;
-    _s.direction = "UP";
+    const { asset, prediction } = best;
+    _s.asset         = asset;
+    _s.upScore       = prediction.upScore;
+    _s.downScore     = prediction.downScore;
+    _s.winConfidence = prediction.confidence;
+    _s.direction     = prediction.direction;
 
-    // ── MEXC USDT balance ─────────────────────────────────────────────────
+    // ── Pre-trade countdown ────────────────────────────────────────────────
+    _s.phase = "pre-trade";
+    for (let t = PRE_TRADE_SECS; t > 0; t--) {
+      if (!(await isEnabled())) break;
+      _s.preTradeIn = t;
+      _s.message    = `Prediction: ${prediction.direction} on ${asset} (${prediction.confidence}% confidence) — entering in ${t}s`;
+      await sleep(1_000);
+    }
+    _s.preTradeIn = 0;
+
+    // Re-check enabled after countdown
+    if (!(await isEnabled())) continue;
+
+    // ── Check USDT balance ────────────────────────────────────────────────
     let freeUsdt: number;
     try {
       freeUsdt = await getFreeBalance("USDT");
@@ -217,21 +343,32 @@ async function loop() {
     const stake = parseFloat((freeUsdt * tradePercent / 100).toFixed(2));
     if (stake < MIN_STAKE_USDT) {
       _s.phase   = "waiting";
-      _s.message = `MEXC USDT balance too low (${freeUsdt.toFixed(2)} USDT free) — need at least ${MIN_STAKE_USDT} USDT`;
+      _s.message = `MEXC USDT balance too low (${freeUsdt.toFixed(2)} free) — need ≥ ${MIN_STAKE_USDT} USDT`;
       await sleep(15_000);
       continue;
     }
     _s.stake = stake;
 
-    // ── Real market BUY on MEXC ───────────────────────────────────────────
+    // ── Execute order ──────────────────────────────────────────────────────
     _s.phase          = "trading";
-    _s.tradeStartedAt = null; // will be set after fill so timer starts from actual entry
-    _s.message        = `${best.score}/8 signal on ${best.asset} — buying ${stake.toFixed(2)} USDT…`;
-    logger.info({ asset: best.asset, score: best.score, stake }, "CT: placing MEXC market buy");
+    _s.tradeStartedAt = null;
+    _s.message        = `${prediction.direction} on ${asset} — ${prediction.reason} — ${stake.toFixed(2)} USDT`;
+    logger.info({ asset, direction: prediction.direction, confidence: prediction.confidence, stake }, "CT: placing order");
+
+    // Currently the MEXC client only does market BUY for UP.
+    // For DOWN predictions we enter a simulated position (no short selling on spot).
+    // A future upgrade would add futures/margin support for DOWN.
+    // For now: only execute real orders on UP predictions; DOWN predictions wait.
+    if (prediction.direction === "DOWN") {
+      _s.phase   = "waiting";
+      _s.message = `DOWN signal on ${asset} — spot-only mode, skipping short. Waiting for UP opportunity…`;
+      await sleep(SCAN_INTERVAL_MS);
+      continue;
+    }
 
     let buy;
     try {
-      buy = await marketBuy(best.asset, stake);
+      buy = await marketBuy(asset, stake);
     } catch (e) {
       logger.error(e, "CT: MEXC buy failed");
       _s.phase = "error"; _s.message = `Buy failed: ${(e as Error).message}`;
@@ -239,13 +376,13 @@ async function loop() {
       continue;
     }
 
-    const entryPrice = buy.avgPrice;
-    _s.tradeStartedAt = Date.now(); // timer starts from actual fill
+    const entryPrice      = buy.avgPrice;
+    _s.tradeStartedAt     = Date.now();
     let tradeId: number | null = null;
     try {
       const [trade] = await db.insert(tradesTable).values({
         accountId:  1,
-        symbol:     best.asset,
+        symbol:     asset,
         direction:  "UP",
         amount:     stake.toFixed(2),
         duration:   Math.round(TRADE_WINDOW_MS / 1000),
@@ -261,47 +398,42 @@ async function loop() {
       logger.error(e, "CT: failed to record trade in DB — position still open on MEXC");
     }
 
-    // ── Monitor window ────────────────────────────────────────────────────
+    // ── Monitor hold window ────────────────────────────────────────────────
     const startTs = Date.now();
     let exitReason: "signal_reversed" | "take_profit" | "stop_loss" | "window_expired" = "window_expired";
 
     while (Date.now() - startTs < TRADE_WINDOW_MS) {
       await sleep(CHECK_INTERVAL_MS);
       let price: number;
-      let score: number;
       try {
-        [price, score] = await Promise.all([
-          getPrice(best.asset),
-          getKlines(best.asset, 30).then(scoreUp),
-        ]);
+        price = await getPrice(asset);
       } catch (e) {
-        logger.warn(e, "CT: mid-trade check failed, holding");
+        logger.warn(e, "CT: mid-trade price check failed, holding");
         continue;
       }
 
       const change = (price - entryPrice) / entryPrice;
-      _s.message = `Holding ${best.asset} — ${(change * 100).toFixed(3)}% since entry`;
+      const secsLeft = Math.round((TRADE_WINDOW_MS - (Date.now() - startTs)) / 1000);
+      _s.message = `Holding ${asset} — ${(change * 100).toFixed(3)}% since entry · ${secsLeft}s left`;
 
-      if (score < MIN_SCORE)         { exitReason = "signal_reversed"; break; }
-      if (change >= TAKE_PROFIT_PCT) { exitReason = "take_profit";     break; }
-      if (change <= -STOP_LOSS_PCT)  { exitReason = "stop_loss";       break; }
-      if (!(await isEnabled()))      { exitReason = "signal_reversed"; break; }
+      if (change >= TAKE_PROFIT_PCT)  { exitReason = "take_profit";     break; }
+      if (change <= -STOP_LOSS_PCT)   { exitReason = "stop_loss";       break; }
+      if (!(await isEnabled()))       { exitReason = "signal_reversed"; break; }
     }
 
-    // ── Real market SELL on MEXC ──────────────────────────────────────────
-    _s.message = `Exiting ${best.asset} (${exitReason})…`;
+    // ── Exit position ──────────────────────────────────────────────────────
+    _s.message = `Exiting ${asset} (${exitReason})…`;
     let sell;
     try {
-      sell = await marketSell(best.asset, buy.baseQty);
+      sell = await marketSell(asset, buy.baseQty);
     } catch (e) {
-      logger.error(e, "CT: MEXC SELL FAILED — position still open, check MEXC manually");
+      logger.error(e, "CT: MEXC SELL FAILED — check MEXC manually");
       _s.phase   = "error";
       _s.message = `Sell failed — check MEXC manually: ${(e as Error).message}`;
       await sleep(10_000);
       continue;
     }
 
-    // Profit in USDT
     const profitUsdt = parseFloat((sell.quoteQty - stake).toFixed(4));
     const status     = profitUsdt > 0 ? "WIN" : profitUsdt < 0 ? "LOSS" : "DRAW";
     const won        = profitUsdt > 0;
@@ -319,7 +451,7 @@ async function loop() {
         .where(eq(tradesTable.id, tradeId));
     }
 
-    // Update internal stats (realizedPnlUsd tracks MEXC USDT profit)
+    // Update account stats
     const acc2 = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
     if (acc2) {
       const newTotal   = acc2.totalTrades + 1;
@@ -337,31 +469,30 @@ async function loop() {
 
     _s.lastResult     = status as "WIN" | "LOSS" | "DRAW";
     _s.lastProfit     = profitUsdt;
-    _s.tradeStartedAt = null; // clear timer — trade is closed
+    _s.tradeStartedAt = null;
     _s.sessionTrades++;
     if (won) _s.sessionWins++;
     _s.sessionProfit += profitUsdt;
     _s.phase   = "waiting";
-    _s.message = `${won ? "✓ WON" : profitUsdt < 0 ? "✗ LOST" : "= FLAT"} ${profitUsdt >= 0 ? "+" : ""}${profitUsdt.toFixed(4)} USDT on ${best.asset} (${exitReason})`;
+    _s.message = `${won ? "✓ WON" : profitUsdt < 0 ? "✗ LOST" : "= FLAT"} ${profitUsdt >= 0 ? "+" : ""}${profitUsdt.toFixed(4)} USDT on ${asset} (${exitReason})`;
 
-    logger.info({ asset: best.asset, status, profitUsdt, exitReason }, "CT: MEXC trade closed");
+    logger.info({ asset, status, profitUsdt, exitReason }, "CT: trade closed");
     await sleep(500);
   }
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────
+// ─── Public API ───────────────────────────────────────────────────────────────
 export async function startSession(tradePercentage: number) {
   await db.update(accountsTable).set({
     autoInvestEnabled: true,
     tradePercentage:   tradePercentage.toFixed(2),
   }).where(eq(accountsTable.id, 1));
 
-  // Snapshot the starting balance for the loss-limit % check
   try {
     _sessionStartBalanceUsdt = await getFreeBalance("USDT");
     logger.info({ startBalance: _sessionStartBalanceUsdt }, "CT: session start balance recorded");
   } catch (e) {
-    logger.warn(e, "CT: could not fetch start balance — loss-limit check disabled for this session");
+    logger.warn(e, "CT: could not fetch start balance — loss-limit check disabled");
     _sessionStartBalanceUsdt = null;
   }
 
@@ -398,8 +529,7 @@ export async function initContinuousTrader() {
   const account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
   if (account?.autoInvestEnabled) {
     const tradePercent = parseFloat((account.tradePercentage as string) ?? "50");
-    logger.info({ tradePercent }, "CT: auto-resuming MEXC session from DB");
-    // Snapshot balance for loss-limit on resume too
+    logger.info({ tradePercent }, "CT: auto-resuming session from DB");
     try {
       _sessionStartBalanceUsdt = await getFreeBalance("USDT");
       logger.info({ startBalance: _sessionStartBalanceUsdt }, "CT: resume start balance recorded");

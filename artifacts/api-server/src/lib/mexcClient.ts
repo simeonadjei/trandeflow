@@ -89,11 +89,14 @@ export interface Candle {
 }
 
 /**
- * 1-minute candles for a MEXC spot symbol (e.g. "BTCUSDT").
+ * Candles for a MEXC spot symbol.
+ * @param symbol  e.g. "BTCUSDT"
+ * @param count   number of candles to return
+ * @param interval MEXC interval string: "1m" | "5m" | "15m" | "1h" etc. (default "1m")
  * Returns oldest → newest.
  */
-export async function getKlines(symbol: string, count = 30): Promise<Candle[]> {
-  const url = `${BASE}/api/v3/klines?symbol=${symbol}&interval=1m&limit=${count}`;
+export async function getKlines(symbol: string, count = 30, interval = "1m"): Promise<Candle[]> {
+  const url = `${BASE}/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${count}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
   const json = await res.json() as any;
   if (!res.ok) throw new Error(`MEXC klines error ${res.status}: ${JSON.stringify(json)}`);
