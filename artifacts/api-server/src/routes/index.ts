@@ -7,6 +7,7 @@ import withdrawalsRouter from "./withdrawals";
 import depositsRouter from "./deposits";
 import authRouter from "./auth";
 import adminRouter from "./admin";
+import sessionRouter from "./session";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,6 @@ router.use(assetsRouter);
 router.use(tradesRouter);
 router.use(withdrawalsRouter);
 router.use(depositsRouter);
+router.use(sessionRouter);
 
 export default router;
