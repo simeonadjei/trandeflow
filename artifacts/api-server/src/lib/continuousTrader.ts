@@ -27,9 +27,9 @@ const CHECK_INTERVAL_MS = 5_000;   // how often to check TP/SL during hold
 const TAKE_PROFIT_PCT   = 0.008;   // +0.8%
 const STOP_LOSS_PCT     = 0.004;   // -0.4%
 const PRE_TRADE_SECS    = 5;       // countdown before order fires (for UI)
-const MIN_SCORE         = 5;       // out of 8 indicators
+const MIN_SCORE         = 4;       // out of 8 indicators (lowered from 5 to get more signals)
 const MIN_LEAD          = 2;       // winner must lead by this many points
-const MIN_STAKE_USDT    = 1;   // minimum stake in USDT
+const MIN_STAKE_USDT    = 5;       // MEXC minimum notional for BTC/ETH spot is ~$5
 
 // ─── Session status ───────────────────────────────────────────────────────────
 export interface SessionStatus {
@@ -370,10 +370,10 @@ async function loop() {
     const stake = parseFloat((freeUsdt * tradePercent / 100).toFixed(2));
     logEvent(`Stake = ${stake.toFixed(4)} USDT (${tradePercent}% of ${freeUsdt.toFixed(4)})`);
     if (stake < MIN_STAKE_USDT) {
-      logEvent(`ERROR: stake ${stake} USDT below minimum ${MIN_STAKE_USDT} USDT — skipping`);
-      _s.phase   = "error";
-      _s.message = `Balance too low: ${freeUsdt.toFixed(4)} USDT free, need ≥ ${MIN_STAKE_USDT} USDT to trade`;
-      await sleep(15_000);
+      logEvent(`WARN: stake ${stake.toFixed(2)} USDT below MEXC minimum ${MIN_STAKE_USDT} USDT — waiting 30s, will retry`);
+      _s.phase   = "waiting";
+      _s.message = `Balance too low: ${freeUsdt.toFixed(4)} USDT free, need ≥ ${MIN_STAKE_USDT} USDT. Retrying in 30s…`;
+      await sleep(30_000);
       continue;
     }
     _s.stake = stake;
@@ -401,13 +401,11 @@ async function loop() {
 
     // Guard: MEXC returned zero fill — order was accepted but not executed
     if (!buy.baseQty || buy.baseQty <= 0) {
-      logEvent(`ERROR: BUY returned qty=0 — order not filled. Check MEXC permissions.`);
+      logEvent(`ERROR: BUY returned qty=0 — order not filled. Retrying in 30s. Check MEXC spot trading permissions if this persists.`);
       _s.phase   = "error";
-      _s.message = `Buy not filled (qty=0) — session stopped. Check MEXC permissions and minimum order size (≥ ${MIN_STAKE_USDT} USDT). Restart to retry.`;
-      await db.update(accountsTable).set({ autoInvestEnabled: false }).where(eq(accountsTable.id, 1));
-      _s.active  = false;
-      _loopRunning = false;
-      return;
+      _s.message = `Buy not filled (qty=0) — check MEXC API permissions have Spot Trading enabled. Retrying in 30s…`;
+      await sleep(30_000);
+      continue;
     }
 
     const entryPrice      = buy.avgPrice;
