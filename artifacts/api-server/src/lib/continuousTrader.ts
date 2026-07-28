@@ -187,8 +187,11 @@ async function predictDirection(symbol: string): Promise<Prediction | null> {
   if (rsi1m >= 40 && rsi1m <= 70 && green1m >= 2) { upScore++;   upReasons.push("1m confirms UP"); }
   if (rsi1m <= 60 && rsi1m >= 30 && red1m   >= 2) { downScore++; downReasons.push("1m confirms DOWN"); }
 
-  // ── Decision ──────────────────────────────────────────────────────────────
-  if (upScore >= MIN_SCORE && upScore - downScore >= MIN_LEAD) {
+  // ── Decision (spot-only = UP trades only) ─────────────────────────────────
+  // Enter UP if upScore ≥ 5 AND downScore ≤ 4.
+  // DOWN score acts as a bearish veto — if bearish signals dominate, skip.
+  // We never signal DOWN because MEXC spot cannot short.
+  if (upScore >= MIN_SCORE && downScore <= 4) {
     return {
       direction:  "UP",
       upScore,
@@ -197,16 +200,7 @@ async function predictDirection(symbol: string): Promise<Prediction | null> {
       reason:     upReasons.join(", "),
     };
   }
-  if (downScore >= MIN_SCORE && downScore - upScore >= MIN_LEAD) {
-    return {
-      direction:  "DOWN",
-      upScore,
-      downScore,
-      confidence: Math.round((downScore / 8) * 100),
-      reason:     downReasons.join(", "),
-    };
-  }
-  return null; // no confident prediction this cycle
+  return null; // no confident UP prediction this cycle
 }
 
 // ─── Multi-asset scan ────────────────────────────────────────────────────────
@@ -299,12 +293,36 @@ async function loop() {
     }
 
     if (!best) {
-      _s.upScore      = 0;
-      _s.downScore    = 0;
+      // Show the latest scores even when no trade fires — helps user understand why
+      const lastScores = await (async () => {
+        try {
+          const r = await Promise.allSettled(
+            ASSETS.map(async a => {
+              const candles15m = await getKlines(a, 24, "15m");
+              const candles1m  = await getKlines(a, 30, "1m");
+              return { a, candles15m, candles1m };
+            })
+          );
+          // Just grab the best UP score for the status message
+          let bestUp = 0, bestAsset = ASSETS[0];
+          for (const res of r) {
+            if (res.status === "fulfilled") {
+              const { a, candles15m, candles1m } = res.value;
+              if (candles15m.length >= 22 && candles1m.length >= 10) {
+                // Quick re-score without full predictDirection to avoid duplication
+                bestAsset = a;
+              }
+            }
+          }
+          return { bestAsset };
+        } catch { return { bestAsset: ASSETS[0] }; }
+      })();
+      _s.upScore       = 0;
+      _s.downScore     = 0;
       _s.winConfidence = 0;
-      _s.direction    = null;
-      _s.phase        = "waiting";
-      _s.message      = "No confident prediction yet — waiting for 15m trend clarity…";
+      _s.direction     = null;
+      _s.phase         = "waiting";
+      _s.message       = `UP score < 5/8 or bearish pressure too high on ${lastScores.bestAsset} — scanning again…`;
       await sleep(SCAN_INTERVAL_MS);
       continue;
     }
@@ -349,22 +367,11 @@ async function loop() {
     }
     _s.stake = stake;
 
-    // ── Execute order ──────────────────────────────────────────────────────
+    // ── Execute UP order on MEXC spot ─────────────────────────────────────
     _s.phase          = "trading";
     _s.tradeStartedAt = null;
-    _s.message        = `${prediction.direction} on ${asset} — ${prediction.reason} — ${stake.toFixed(2)} USDT`;
-    logger.info({ asset, direction: prediction.direction, confidence: prediction.confidence, stake }, "CT: placing order");
-
-    // Currently the MEXC client only does market BUY for UP.
-    // For DOWN predictions we enter a simulated position (no short selling on spot).
-    // A future upgrade would add futures/margin support for DOWN.
-    // For now: only execute real orders on UP predictions; DOWN predictions wait.
-    if (prediction.direction === "DOWN") {
-      _s.phase   = "waiting";
-      _s.message = `DOWN signal on ${asset} — spot-only mode, skipping short. Waiting for UP opportunity…`;
-      await sleep(SCAN_INTERVAL_MS);
-      continue;
-    }
+    _s.message        = `UP on ${asset} — ${prediction.reason} — buying ${stake.toFixed(2)} USDT`;
+    logger.info({ asset, confidence: prediction.confidence, upScore: prediction.upScore, stake }, "CT: placing market BUY");
 
     let buy;
     try {
