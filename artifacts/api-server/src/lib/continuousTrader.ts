@@ -367,7 +367,8 @@ async function loop() {
       continue;
     }
 
-    const stake = parseFloat((freeUsdt * tradePercent / 100).toFixed(2));
+    // Floor to 2 dp — never bid more than the account actually holds
+    const stake = Math.floor(freeUsdt * tradePercent) / 100;
     logEvent(`Stake = ${stake.toFixed(4)} USDT (${tradePercent}% of ${freeUsdt.toFixed(4)})`);
     if (stake < MIN_STAKE_USDT) {
       logEvent(`WARN: stake ${stake.toFixed(2)} USDT below MEXC minimum ${MIN_STAKE_USDT} USDT — waiting 30s, will retry`);
