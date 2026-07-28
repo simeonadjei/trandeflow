@@ -63,7 +63,7 @@ paths:
               properties:
                 dailyLossLimit:
                   type: number
-                  description: Max USDT loss per calendar day. 0 = disabled.
+                  description: "Balance loss threshold as a percentage (0–100). Bot stops when balance drops by this % from session start. 0 = disabled."
       responses:
         "200":
           description: Updated account

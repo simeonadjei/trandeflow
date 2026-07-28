@@ -638,23 +638,27 @@ export default function Trade() {
               <div className="mb-4 border border-border rounded-lg p-3 bg-card/50">
                 <div className="flex items-center gap-1.5 mb-2">
                   <ShieldCheck className="w-3.5 h-3.5 text-yellow-400" />
-                  <span className="text-xs font-semibold text-muted-foreground">Daily Loss Limit (USDT)</span>
+                  <span className="text-xs font-semibold text-muted-foreground">Balance Loss Limit</span>
                   {(account?.dailyLossLimit ?? 0) > 0 && (
                     <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-yellow-400/15 border border-yellow-400/30 text-yellow-400 font-semibold">
-                      Active: {account!.dailyLossLimit} USDT
+                      Active: {account!.dailyLossLimit}%
                     </span>
                   )}
                 </div>
                 <div className="flex gap-2">
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.01}
-                    placeholder="0 = disabled"
-                    value={lossLimitInput}
-                    onChange={(e) => { setLossLimitInput(e.target.value); setLossLimitSaved(false); }}
-                    className="flex-1 bg-background border border-border rounded-lg px-3 py-1.5 text-sm font-mono focus:outline-none focus:border-primary transition-colors"
-                  />
+                  <div className="relative flex-1">
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      placeholder="e.g. 40"
+                      value={lossLimitInput}
+                      onChange={(e) => { setLossLimitInput(e.target.value); setLossLimitSaved(false); }}
+                      className="w-full bg-background border border-border rounded-lg px-3 py-1.5 pr-7 text-sm font-mono focus:outline-none focus:border-primary transition-colors"
+                    />
+                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-semibold">%</span>
+                  </div>
                   <button
                     disabled={lossLimitSaving}
                     onClick={async () => {
@@ -675,7 +679,7 @@ export default function Trade() {
                   </button>
                 </div>
                 <p className="text-[10px] text-muted-foreground mt-1.5">
-                  Bot stops automatically when today's losses reach this amount. Set to 0 to disable.
+                  Bot stops when balance drops by this % from session start. E.g. 40 = stop if $100 falls to $60. Set to 0 to disable.
                 </p>
               </div>
             )}

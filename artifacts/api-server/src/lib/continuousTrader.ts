@@ -12,7 +12,7 @@
 
 import { db } from "@workspace/db";
 import { accountsTable, tradesTable } from "@workspace/db";
-import { eq, and, gte, lt, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { logger } from "./logger";
 import {
   hasMexcCredentials, getFreeBalance, getKlines, getPrice,
@@ -43,6 +43,9 @@ let _s: SessionStatus = {
   sessionTrades: 0, sessionWins: 0, sessionProfit: 0,
   message: "Ready",
 };
+
+// Balance recorded at session start — used for % loss-limit check
+let _sessionStartBalanceUsdt: number | null = null;
 
 export function getSessionStatus(): SessionStatus { return { ..._s }; }
 
@@ -142,33 +145,26 @@ async function loop() {
     const tradePercent = Math.min(100, Math.max(1, parseFloat((account?.tradePercentage as string) ?? "50")));
     _s.tradePercent    = tradePercent;
 
-    // ── Daily loss limit check ─────────────────────────────────────────────
-    const dailyLossLimit = parseFloat((account?.dailyLossLimit as string) ?? "0");
-    if (dailyLossLimit > 0) {
-      // Sum losses from real (non-demo) closed trades today (UTC calendar day)
-      const todayStart = new Date();
-      todayStart.setUTCHours(0, 0, 0, 0);
-      const tomorrowStart = new Date(todayStart);
-      tomorrowStart.setUTCDate(tomorrowStart.getUTCDate() + 1);
-
-      const rows = await db
-        .select({ totalLoss: sql<string>`COALESCE(SUM(CASE WHEN profit < 0 THEN ABS(profit) ELSE 0 END), 0)` })
-        .from(tradesTable)
-        .where(
-          and(
-            eq(tradesTable.isDemo, false),
-            gte(tradesTable.closedAt, todayStart),
-            lt(tradesTable.closedAt, tomorrowStart),
-          ),
+    // ── Balance loss-limit check ───────────────────────────────────────────
+    // dailyLossLimit stores a percentage (0 = disabled, e.g. 40 = stop at -40%)
+    const lossLimitPct = parseFloat((account?.dailyLossLimit as string) ?? "0");
+    if (lossLimitPct > 0 && _sessionStartBalanceUsdt !== null && _sessionStartBalanceUsdt > 0) {
+      let currentBalanceForCheck: number;
+      try {
+        currentBalanceForCheck = await getFreeBalance("USDT");
+      } catch {
+        currentBalanceForCheck = _sessionStartBalanceUsdt; // can't check — skip this iteration
+      }
+      const dropPct = (_sessionStartBalanceUsdt - currentBalanceForCheck) / _sessionStartBalanceUsdt * 100;
+      if (dropPct >= lossLimitPct) {
+        logger.warn(
+          { startBalance: _sessionStartBalanceUsdt, currentBalance: currentBalanceForCheck, dropPct, lossLimitPct },
+          "CT: balance loss limit reached — stopping session",
         );
-
-      const todayLossUsdt = parseFloat(rows[0]?.totalLoss ?? "0");
-      if (todayLossUsdt >= dailyLossLimit) {
-        logger.warn({ todayLossUsdt, dailyLossLimit }, "CT: daily loss limit reached — stopping session");
         await db.update(accountsTable).set({ autoInvestEnabled: false }).where(eq(accountsTable.id, 1));
         _s.active  = false;
         _s.phase   = "idle";
-        _s.message = `Daily loss limit reached (${todayLossUsdt.toFixed(2)} / ${dailyLossLimit.toFixed(2)} USDT). Session stopped.`;
+        _s.message = `Loss limit hit: balance dropped ${dropPct.toFixed(1)}% (from ${_sessionStartBalanceUsdt.toFixed(2)} → ${currentBalanceForCheck.toFixed(2)} USDT). Session stopped.`;
         _loopRunning = false;
         return;
       }
@@ -352,6 +348,15 @@ export async function startSession(tradePercentage: number) {
     tradePercentage:   tradePercentage.toFixed(2),
   }).where(eq(accountsTable.id, 1));
 
+  // Snapshot the starting balance for the loss-limit % check
+  try {
+    _sessionStartBalanceUsdt = await getFreeBalance("USDT");
+    logger.info({ startBalance: _sessionStartBalanceUsdt }, "CT: session start balance recorded");
+  } catch (e) {
+    logger.warn(e, "CT: could not fetch start balance — loss-limit check disabled for this session");
+    _sessionStartBalanceUsdt = null;
+  }
+
   _s = {
     ..._s,
     active:        true,
@@ -374,6 +379,7 @@ export async function startSession(tradePercentage: number) {
 
 export async function stopSession() {
   await db.update(accountsTable).set({ autoInvestEnabled: false }).where(eq(accountsTable.id, 1));
+  _sessionStartBalanceUsdt = null;
   _s.active  = false;
   _s.phase   = "idle";
   _s.message = "Stopped by user";
@@ -385,6 +391,13 @@ export async function initContinuousTrader() {
   if (account?.autoInvestEnabled) {
     const tradePercent = parseFloat((account.tradePercentage as string) ?? "50");
     logger.info({ tradePercent }, "CT: auto-resuming MEXC session from DB");
+    // Snapshot balance for loss-limit on resume too
+    try {
+      _sessionStartBalanceUsdt = await getFreeBalance("USDT");
+      logger.info({ startBalance: _sessionStartBalanceUsdt }, "CT: resume start balance recorded");
+    } catch {
+      _sessionStartBalanceUsdt = null;
+    }
     _s.active       = true;
     _s.tradePercent = tradePercent;
     _loopRunning    = true;
