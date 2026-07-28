@@ -193,12 +193,15 @@ export default function Trade() {
   const { data: trades, refetch: refetchTrades } = useListTrades({ query: { refetchInterval: 3000, queryKey: getListTradesQueryKey() } });
   const { data: account } = useGetAccount({ query: { refetchInterval: 3000, queryKey: getGetAccountQueryKey() } });
 
-  // In real mode: use MEXC free USDT as the effective balance (min 1 USDT to start)
+  // In real mode: use MEXC free USDT as the effective balance (min 1 USDT to start).
+  // If MEXC is connected but we haven't received balance data yet (null = loading),
+  // treat balance as sufficient so buttons aren't permanently disabled on load.
   const MIN_TRADE_BALANCE_USDT = 1;
+  const mexcBalanceLoading = account?.mexcConnected && account?.mexcFreeUsdt == null;
   const realEffectiveBalance = account?.mexcConnected && account?.mexcFreeUsdt != null
     ? account.mexcFreeUsdt
     : (account?.balance ?? 0);
-  const realBalanceSufficient = realEffectiveBalance >= MIN_TRADE_BALANCE_USDT;
+  const realBalanceSufficient = mexcBalanceLoading || realEffectiveBalance >= MIN_TRADE_BALANCE_USDT;
 
   const handleStartSession = async () => {
     // Guard: must have at least 1 USDT free on MEXC before bot can run

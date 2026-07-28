@@ -1,21 +1,17 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import {
-  useGetAccount, useListDeposits, useCreateDeposit, useListWithdrawals, useRequestWithdrawal,
+  useGetAccount, useListDeposits, useListWithdrawals,
   getGetAccountQueryKey, getListDepositsQueryKey, getListWithdrawalsQueryKey,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../lib/AuthContext";
-import { TrendingUp, ArrowUpToLine, ArrowDownToLine, CheckCircle, Clock, XCircle, Loader2, RefreshCw, Smartphone } from "lucide-react";
-
-const PROVIDERS = [
-  { id: "MTN",        label: "MTN MoMo",         color: "border-yellow-400 text-yellow-300 bg-yellow-400/10",  inactive: "border-border text-muted-foreground" },
-  { id: "VODAFONE",   label: "Vodafone Cash",     color: "border-red-400 text-red-300 bg-red-400/10",           inactive: "border-border text-muted-foreground" },
-  { id: "AIRTELTIGO", label: "AirtelTigo Money",  color: "border-blue-400 text-blue-300 bg-blue-400/10",        inactive: "border-border text-muted-foreground" },
-];
+import {
+  TrendingUp, ArrowUpToLine, ArrowDownToLine, CheckCircle, Clock,
+  XCircle, Loader2, RefreshCw, ExternalLink, Wallet as WalletIcon,
+} from "lucide-react";
 
 function StatusBadge({ status }: { status: string }) {
-  if (status === "COMPLETED")  return <span className="flex items-center gap-1 text-xs text-profit"><CheckCircle className="w-3 h-3" /> Paid</span>;
+  if (status === "COMPLETED")  return <span className="flex items-center gap-1 text-xs text-profit"><CheckCircle className="w-3 h-3" /> Completed</span>;
   if (status === "PROCESSING") return <span className="flex items-center gap-1 text-xs text-yellow-400"><Loader2 className="w-3 h-3 animate-spin" /> Processing</span>;
   if (status === "FAILED")     return <span className="flex items-center gap-1 text-xs text-loss"><XCircle className="w-3 h-3" /> Failed</span>;
   return <span className="flex items-center gap-1 text-xs text-muted-foreground"><Clock className="w-3 h-3" /> Pending</span>;
@@ -27,58 +23,15 @@ export default function Wallet() {
     const p = new URLSearchParams(window.location.search).get("tab");
     return p === "withdraw" ? "withdraw" : "deposit";
   });
-  const [amount, setAmount]     = useState("");
-  const [phone, setPhone]       = useState("");
-  const [provider, setProvider] = useState("MTN");
-  const [prompt, setPrompt]     = useState<string | null>(null);
-  const [error, setError]       = useState<string | null>(null);
 
-  const queryClient = useQueryClient();
-  const { data: account, refetch: refetchAccount } = useGetAccount({ query: { refetchInterval: 4000, queryKey: getGetAccountQueryKey() } });
-  const { data: deposits,     refetch: refetchDeposits }     = useListDeposits({    query: { refetchInterval: 5000, queryKey: getListDepositsQueryKey() } });
-  const { data: withdrawals,  refetch: refetchWithdrawals }  = useListWithdrawals({ query: { refetchInterval: 5000, queryKey: getListWithdrawalsQueryKey() } });
-
-  const createDeposit = useCreateDeposit({
-    mutation: {
-      onSuccess: (data: any) => {
-        setPrompt(data.displayStatus ?? "Check your phone and approve the MoMo prompt.");
-        setAmount("");
-        queryClient.invalidateQueries({ queryKey: getListDepositsQueryKey() });
-        queryClient.invalidateQueries({ queryKey: getGetAccountQueryKey() });
-        refetchDeposits();
-        refetchAccount();
-      },
-      onError: (e: any) => setError(e?.response?.data?.error ?? "Deposit failed. Try again."),
-    },
+  const { data: account, refetch: refetchAccount } = useGetAccount({
+    query: { refetchInterval: 4000, queryKey: getGetAccountQueryKey() },
   });
+  const { data: deposits }    = useListDeposits({    query: { refetchInterval: 5000, queryKey: getListDepositsQueryKey() } });
+  const { data: withdrawals } = useListWithdrawals({ query: { refetchInterval: 5000, queryKey: getListWithdrawalsQueryKey() } });
 
-  const requestWithdrawal = useRequestWithdrawal({
-    mutation: {
-      onSuccess: () => {
-        setPrompt("Withdrawal submitted — you'll receive the MoMo payment shortly.");
-        setAmount("");
-        queryClient.invalidateQueries({ queryKey: getListWithdrawalsQueryKey() });
-        queryClient.invalidateQueries({ queryKey: getGetAccountQueryKey() });
-        refetchWithdrawals();
-        refetchAccount();
-      },
-      onError: (e: any) => setError(e?.response?.data?.error ?? "Withdrawal failed."),
-    },
-  });
-
-  const amt     = parseFloat(amount) || 0;
-  const balance = account?.balance ?? 0;
-  const canGo   = amt >= 5 && phone.length >= 10 && (tab === "deposit" || amt <= balance);
-
-  function handleGo() {
-    setError(null);
-    setPrompt(null);
-    if (tab === "deposit") {
-      createDeposit.mutate({ data: { amount: amt, momoNumber: phone, momoProvider: provider as any } });
-    } else {
-      requestWithdrawal.mutate({ data: { amount: amt, momoNumber: phone, momoProvider: provider as any } });
-    }
-  }
+  const spotBalance  = account?.mexcFreeUsdt ?? null;
+  const totalBalance = account?.mexcBalanceUsdt ?? null;
 
   const history = tab === "deposit"
     ? (deposits ?? []).map(d => ({ id: d.id, amount: d.amount, label: d.momoNumber, status: d.status, date: d.createdAt, sign: "+" }))
@@ -108,123 +61,152 @@ export default function Wallet() {
       </div>
 
       <div className="pt-14 max-w-lg mx-auto px-4 py-8">
-        {/* Balance */}
-        <div className="bg-card border border-primary/20 rounded-2xl p-6 mb-6 text-center glow-gold">
-          <div className="text-xs text-muted-foreground mb-1">Available Balance</div>
-          <div className="text-4xl font-black text-primary">GHS {balance.toFixed(2)}</div>
-          <button onClick={() => refetchAccount()} className="mt-2 text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 mx-auto">
-            <RefreshCw className="w-3 h-3" /> Refresh
-          </button>
+        {/* Spot Balance card */}
+        <div className="bg-card border border-primary/20 rounded-2xl p-6 mb-6 glow-gold">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2 text-xs font-bold text-muted-foreground uppercase tracking-wider">
+              <WalletIcon className="w-3.5 h-3.5 text-primary" />
+              MEXC Spot Wallet
+            </div>
+            <button
+              onClick={() => refetchAccount()}
+              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+            >
+              <RefreshCw className="w-3 h-3" /> Refresh
+            </button>
+          </div>
+          <div className="text-center py-2">
+            <div className="text-xs text-muted-foreground mb-1">Free to Trade</div>
+            <div className="text-4xl font-black text-primary">
+              {spotBalance != null ? `${spotBalance.toFixed(4)} USDT` : "—"}
+            </div>
+            {totalBalance != null && (
+              <div className="mt-1 text-xs text-muted-foreground">
+                Total portfolio ≈ <span className="text-foreground font-semibold">{totalBalance.toFixed(4)} USDT</span>
+              </div>
+            )}
+          </div>
+          {/* Breakdown */}
+          {account?.mexcBreakdown && account.mexcBreakdown.length > 0 && (
+            <div className="mt-4 space-y-1.5 border-t border-border pt-3">
+              {account.mexcBreakdown.filter(b => b.free + b.locked > 0).map(b => (
+                <div key={b.asset} className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">{b.asset}</span>
+                  <span className="font-mono font-semibold">
+                    {b.asset === "USDT"
+                      ? `${b.free.toFixed(4)} free${b.locked > 0 ? ` · ${b.locked.toFixed(4)} locked` : ""}`
+                      : `${(b.free + b.locked).toFixed(6)} ≈ ${b.valueUsdt.toFixed(4)} USDT`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Tabs */}
         <div className="grid grid-cols-2 bg-card border border-border rounded-xl overflow-hidden mb-5">
           <button
-            onClick={() => { setTab("deposit"); setPrompt(null); setError(null); }}
+            onClick={() => setTab("deposit")}
             className={`py-3 text-sm font-bold flex items-center justify-center gap-2 transition-colors ${tab === "deposit" ? "bg-profit/10 text-profit border-b-2 border-profit" : "text-muted-foreground hover:text-foreground"}`}
           >
             <ArrowUpToLine className="w-4 h-4" /> Deposit
           </button>
           <button
-            onClick={() => { setTab("withdraw"); setPrompt(null); setError(null); }}
+            onClick={() => setTab("withdraw")}
             className={`py-3 text-sm font-bold flex items-center justify-center gap-2 transition-colors ${tab === "withdraw" ? "bg-primary/10 text-primary border-b-2 border-primary" : "text-muted-foreground hover:text-foreground"}`}
           >
             <ArrowDownToLine className="w-4 h-4" /> Withdraw
           </button>
         </div>
 
-        {/* Form card */}
-        <div className="bg-card border border-border rounded-2xl p-5 mb-5">
+        {/* MEXC P2P Info card */}
+        <div className="bg-card border border-border rounded-2xl p-5 mb-5 space-y-4">
+          {tab === "deposit" ? (
+            <>
+              <div>
+                <h3 className="font-bold text-base mb-1 flex items-center gap-2">
+                  <ArrowUpToLine className="w-4 h-4 text-profit" />
+                  Deposit via MEXC P2P
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  Add funds to your MEXC Spot wallet using P2P trading. Buy USDT from a peer using your local
+                  payment method (bank transfer, mobile money, etc.) — MEXC connects you with verified merchants.
+                </p>
+              </div>
 
-          {/* Feedback */}
-          {prompt && (
-            <div className="mb-4 p-3 bg-profit/10 border border-profit/30 rounded-xl flex items-start gap-3">
-              <Smartphone className="w-4 h-4 text-profit shrink-0 mt-0.5" />
-              <p className="text-sm text-profit">{prompt}</p>
-            </div>
-          )}
-          {error && (
-            <div className="mb-4 p-3 bg-loss/10 border border-loss/30 rounded-xl text-sm text-loss">{error}</div>
-          )}
+              <div className="space-y-2 text-sm">
+                <div className="flex items-start gap-2.5 p-3 bg-secondary/50 rounded-xl">
+                  <span className="w-5 h-5 rounded-full bg-profit text-white flex items-center justify-center text-[11px] font-black shrink-0 mt-0.5">1</span>
+                  <span>Open MEXC and go to <strong>Buy Crypto → P2P Trading</strong></span>
+                </div>
+                <div className="flex items-start gap-2.5 p-3 bg-secondary/50 rounded-xl">
+                  <span className="w-5 h-5 rounded-full bg-profit text-white flex items-center justify-center text-[11px] font-black shrink-0 mt-0.5">2</span>
+                  <span>Select <strong>USDT</strong> and choose a payment method (bank, MoMo, etc.)</span>
+                </div>
+                <div className="flex items-start gap-2.5 p-3 bg-secondary/50 rounded-xl">
+                  <span className="w-5 h-5 rounded-full bg-profit text-white flex items-center justify-center text-[11px] font-black shrink-0 mt-0.5">3</span>
+                  <span>Complete the payment — USDT will appear in your Spot wallet automatically</span>
+                </div>
+              </div>
 
-          {/* Network */}
-          <div className="mb-4">
-            <label className="text-xs text-muted-foreground mb-2 block font-medium">Mobile Network</label>
-            <div className="grid grid-cols-3 gap-2">
-              {PROVIDERS.map(p => (
-                <button
-                  key={p.id}
-                  onClick={() => setProvider(p.id)}
-                  className={`py-2.5 border rounded-lg text-xs font-semibold transition-all ${provider === p.id ? p.color : p.inactive}`}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
+              <a
+                href="https://www.mexc.com/en-US/trade/p2p"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-3.5 bg-profit hover:opacity-90 text-white font-black rounded-xl transition-opacity flex items-center justify-center gap-2 text-sm"
+              >
+                <ArrowUpToLine className="w-4 h-4" />
+                Deposit on MEXC P2P
+                <ExternalLink className="w-3.5 h-3.5 opacity-70" />
+              </a>
 
-          {/* Amount */}
-          <div className="mb-4">
-            <label className="text-xs text-muted-foreground mb-1.5 block font-medium">
-              Amount (GHS)
-              {tab === "withdraw" && <span className="ml-1 text-primary">Max: {balance.toFixed(2)}</span>}
-            </label>
-            <input
-              type="number"
-              min={5}
-              value={amount}
-              onChange={e => setAmount(e.target.value)}
-              placeholder="e.g. 100"
-              className="w-full bg-background border border-border rounded-lg px-3 py-2.5 text-sm font-mono focus:outline-none focus:border-primary"
-            />
-            <div className="flex gap-1.5 mt-2">
-              {(tab === "deposit" ? [50, 100, 200, 500] : [50, 100, 200, balance]).map((v, i, arr) => (
-                <button
-                  key={i}
-                  onClick={() => setAmount(String(typeof v === "number" ? parseFloat(v.toFixed(2)) : v))}
-                  className="flex-1 py-1 text-xs rounded bg-secondary hover:bg-secondary/80 font-medium"
-                >
-                  {tab === "withdraw" && i === arr.length - 1 ? "Max" : `${v}`}
-                </button>
-              ))}
-            </div>
-          </div>
+              <p className="text-center text-xs text-muted-foreground">
+                Opens MEXC in a new tab. Your USDT balance here refreshes automatically once received.
+              </p>
+            </>
+          ) : (
+            <>
+              <div>
+                <h3 className="font-bold text-base mb-1 flex items-center gap-2">
+                  <ArrowDownToLine className="w-4 h-4 text-primary" />
+                  Withdraw via MEXC P2P
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  Cash out your USDT by selling it to a peer on MEXC P2P. Receive payment directly to your bank
+                  account or mobile money wallet.
+                </p>
+              </div>
 
-          {/* Phone */}
-          <div className="mb-5">
-            <label className="text-xs text-muted-foreground mb-1.5 block font-medium">MoMo Phone Number</label>
-            <input
-              type="tel"
-              value={phone}
-              onChange={e => setPhone(e.target.value)}
-              placeholder="e.g. 0241234567"
-              className="w-full bg-background border border-border rounded-lg px-3 py-2.5 text-sm font-mono focus:outline-none focus:border-primary"
-            />
-          </div>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-start gap-2.5 p-3 bg-secondary/50 rounded-xl">
+                  <span className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[11px] font-black shrink-0 mt-0.5">1</span>
+                  <span>Open MEXC and go to <strong>Sell Crypto → P2P Trading</strong></span>
+                </div>
+                <div className="flex items-start gap-2.5 p-3 bg-secondary/50 rounded-xl">
+                  <span className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[11px] font-black shrink-0 mt-0.5">2</span>
+                  <span>Select <strong>USDT</strong> and pick your preferred payment method</span>
+                </div>
+                <div className="flex items-start gap-2.5 p-3 bg-secondary/50 rounded-xl">
+                  <span className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[11px] font-black shrink-0 mt-0.5">3</span>
+                  <span>Confirm the order — a merchant sends you the cash, then USDT is released</span>
+                </div>
+              </div>
 
-          {/* CTA */}
-          <button
-            onClick={handleGo}
-            disabled={!canGo || createDeposit.isPending || requestWithdrawal.isPending}
-            className={`w-full py-3.5 font-bold rounded-xl transition-opacity disabled:opacity-40 flex items-center justify-center gap-2 ${
-              tab === "deposit"
-                ? "bg-profit text-white hover:opacity-90"
-                : "bg-primary text-primary-foreground hover:opacity-90"
-            }`}
-          >
-            {(createDeposit.isPending || requestWithdrawal.isPending) ? (
-              <><Loader2 className="w-4 h-4 animate-spin" /> Sending request…</>
-            ) : tab === "deposit" ? (
-              <><ArrowUpToLine className="w-4 h-4" /> Deposit via {PROVIDERS.find(p => p.id === provider)?.label}</>
-            ) : (
-              <><ArrowDownToLine className="w-4 h-4" /> Withdraw to MoMo</>
-            )}
-          </button>
+              <a
+                href="https://www.mexc.com/en-US/trade/p2p"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-3.5 bg-primary hover:opacity-90 text-primary-foreground font-black rounded-xl transition-opacity flex items-center justify-center gap-2 text-sm"
+              >
+                <ArrowDownToLine className="w-4 h-4" />
+                Withdraw on MEXC P2P
+                <ExternalLink className="w-3.5 h-3.5 opacity-70" />
+              </a>
 
-          {tab === "deposit" && (
-            <p className="text-center text-xs text-muted-foreground mt-3">
-              A MoMo prompt will appear on your phone. Approve it to credit your balance instantly.
-            </p>
+              <p className="text-center text-xs text-muted-foreground">
+                Opens MEXC in a new tab. Your balance here will reflect any changes after selling.
+              </p>
+            </>
           )}
         </div>
 
@@ -241,7 +223,7 @@ export default function Wallet() {
                 <div key={tx.id} className="flex items-center justify-between px-4 py-3">
                   <div>
                     <span className={`font-bold text-sm ${tx.sign === "+" ? "text-profit" : "text-loss"}`}>
-                      {tx.sign}GHS {tx.amount.toFixed(2)}
+                      {tx.sign}{tx.amount.toFixed(2)} USDT
                     </span>
                     <div className="text-xs text-muted-foreground mt-0.5">{tx.label}</div>
                   </div>
