@@ -59,7 +59,8 @@ async function privateGet(path: string, params: Record<string, string | number> 
     signal: AbortSignal.timeout(10_000),
   });
   const json = await res.json() as any;
-  if (!res.ok || json.code) {
+  // MEXC returns code:0 on success in some endpoints — only treat non-zero as an error
+  if (!res.ok || (json.code !== undefined && json.code !== 0)) {
     throw new Error(`MEXC GET ${path} error ${res.status}: ${json.msg ?? JSON.stringify(json)}`);
   }
   return json;
@@ -74,7 +75,8 @@ async function privatePost(path: string, params: Record<string, string | number>
     signal: AbortSignal.timeout(10_000),
   });
   const json = await res.json() as any;
-  if (!res.ok || json.code) {
+  // MEXC returns code:0 on success in some endpoints — only treat non-zero as an error
+  if (!res.ok || (json.code !== undefined && json.code !== 0)) {
     throw new Error(`MEXC POST ${path} error ${res.status}: ${json.msg ?? JSON.stringify(json)}`);
   }
   return json;

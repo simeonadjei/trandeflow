@@ -398,6 +398,15 @@ async function loop() {
       continue;
     }
 
+    // Guard: MEXC returned zero fill — order was accepted but not executed
+    if (!buy.baseQty || buy.baseQty <= 0) {
+      logger.error({ buy }, "CT: BUY order returned zero baseQty — order not filled");
+      _s.phase   = "error";
+      _s.message = `Buy not filled (baseQty=0) — check MEXC account permissions and minimum order size`;
+      await sleep(10_000);
+      continue;
+    }
+
     const entryPrice      = buy.avgPrice;
     _s.tradeStartedAt     = Date.now();
     let tradeId: number | null = null;

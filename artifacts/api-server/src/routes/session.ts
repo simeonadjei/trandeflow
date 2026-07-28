@@ -4,6 +4,11 @@ import {
   stopSession,
   getSessionStatus,
 } from "../lib/continuousTrader";
+import {
+  hasMexcCredentials,
+  getFreeBalance,
+  getPrice,
+} from "../lib/mexcClient";
 
 const router = Router();
 
@@ -35,6 +40,50 @@ router.post("/session/stop", async (req, res) => {
   } catch (err) {
     req.log.error(err, "session/stop failed");
     res.status(500).json({ error: "Failed to stop session" });
+  }
+});
+
+/**
+ * GET /bot/test-mexc — verify MEXC API credentials and connectivity.
+ * Returns key presence, live USDT balance, and BTC/ETH prices.
+ * Safe to call at any time; does not place any orders.
+ */
+router.get("/bot/test-mexc", async (req, res) => {
+  const credentialsPresent = hasMexcCredentials();
+  if (!credentialsPresent) {
+    return res.status(400).json({
+      ok: false,
+      credentialsPresent: false,
+      error: "MEXC_API_KEY or MEXC_API_SECRET not configured",
+    });
+  }
+
+  const result: {
+    ok: boolean;
+    credentialsPresent: boolean;
+    usdtBalance?: number;
+    btcPrice?: number;
+    ethPrice?: number;
+    error?: string;
+  } = { ok: false, credentialsPresent: true };
+
+  try {
+    // Run all three checks in parallel — if any throw, we capture the error
+    const [usdtBalance, btcPrice, ethPrice] = await Promise.all([
+      getFreeBalance("USDT"),
+      getPrice("BTCUSDT"),
+      getPrice("ETHUSDT"),
+    ]);
+    result.ok = true;
+    result.usdtBalance = usdtBalance;
+    result.btcPrice    = btcPrice;
+    result.ethPrice    = ethPrice;
+    req.log.info(result, "bot/test-mexc: credentials OK");
+    return res.json(result);
+  } catch (e) {
+    result.error = (e as Error).message;
+    req.log.error({ err: result.error }, "bot/test-mexc: MEXC call failed");
+    return res.status(502).json(result);
   }
 });
 
