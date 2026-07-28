@@ -133,6 +133,7 @@ export default function Trade() {
   const [lossLimitInput, setLossLimitInput] = useState("");
   const [lossLimitSaving, setLossLimitSaving] = useState(false);
   const [lossLimitSaved, setLossLimitSaved] = useState(false);
+  const [tradeSecsLeft, setTradeSecsLeft] = useState(0);
 
   const { isDemo, toggleDemo } = useDemoMode();
   const { user, logout, token, isAdmin } = useAuth();
@@ -205,6 +206,22 @@ export default function Trade() {
       setLossLimitInput(account.dailyLossLimit === 0 ? "" : String(account.dailyLossLimit));
     }
   }, [account?.dailyLossLimit]);
+
+  // Live countdown timer — counts down from tradeWindowMs once a trade is open
+  useEffect(() => {
+    if (session?.phase !== "trading" || !session?.tradeStartedAt) {
+      setTradeSecsLeft(0);
+      return;
+    }
+    const windowMs = session.tradeWindowMs ?? 300_000;
+    const update = () => {
+      const elapsed = Date.now() - (session.tradeStartedAt as number);
+      setTradeSecsLeft(Math.max(0, Math.round((windowMs - elapsed) / 1000)));
+    };
+    update();
+    const iv = setInterval(update, 500);
+    return () => clearInterval(iv);
+  }, [session?.phase, session?.tradeStartedAt, session?.tradeWindowMs]);
 
   // In real mode: use MEXC free USDT as the effective balance.
   const realEffectiveBalance = account?.mexcConnected && account?.mexcFreeUsdt != null
@@ -804,17 +821,38 @@ export default function Trade() {
                     </div>
                   )}
 
-                  {/* Trading countdown */}
-                  {session.phase === "trading" && session.countdown > 0 && (
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-muted-foreground">
-                        {session.direction === "UP" ? "▲ UP" : "▼ DOWN"} on <span className="text-foreground font-semibold">{session.asset}</span>
-                        <span className="ml-1.5 text-[10px] text-profit/70">{session.winConfidence}% confidence</span>
-                      </span>
-                      <span className="font-mono font-bold text-yellow-400">
-                        <Clock className="w-3 h-3 inline mr-1" />
-                        {session.countdown}s
-                      </span>
+                  {/* Trading countdown timer */}
+                  {session.phase === "trading" && tradeSecsLeft > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground">
+                          {session.direction === "UP" ? "▲ UP" : "▼ DOWN"} on{" "}
+                          <span className="text-foreground font-semibold">{session.asset}</span>
+                        </span>
+                        <span className="font-mono font-bold text-yellow-400 flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {Math.floor(tradeSecsLeft / 60)}:{String(tradeSecsLeft % 60).padStart(2, "0")} left
+                        </span>
+                      </div>
+                      {/* Progress bar — drains left to right as time runs out */}
+                      <div className="h-2 bg-secondary rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{
+                            width: `${(tradeSecsLeft / ((session.tradeWindowMs ?? 300_000) / 1000)) * 100}%`,
+                            background: tradeSecsLeft > 120
+                              ? "#eab308"   // yellow — plenty of time
+                              : tradeSecsLeft > 30
+                              ? "#f97316"   // orange — getting close
+                              : "#ef4444",  // red — final stretch
+                          }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-[10px] text-muted-foreground">
+                        <span className="text-profit font-semibold">TP +0.8%</span>
+                        <span className="text-muted-foreground">max 5 min hold</span>
+                        <span className="text-loss font-semibold">SL −0.4%</span>
+                      </div>
                     </div>
                   )}
 

@@ -19,21 +19,32 @@ import {
   marketBuy, marketSell, type Candle,
 } from "./mexcClient";
 
+// ─── Tunables (declared first so _s initialiser can reference them) ──────
+const SCAN_INTERVAL_MS  = 5_000;
+const TRADE_WINDOW_MS   = 300_000; // hold up to 5 min
+const CHECK_INTERVAL_MS = 5_000;
+const TAKE_PROFIT_PCT   = 0.008;   // +0.8 %
+const STOP_LOSS_PCT     = 0.004;   // -0.4 %
+
 // ─── Session status ───────────────────────────────────────────────────────
 export interface SessionStatus {
-  active:          boolean;
-  stake:           number;
-  tradePercent:    number;
-  phase:           "idle" | "analyzing" | "trading" | "waiting" | "error";
-  asset:           string;
-  direction:       "UP" | null;
-  upScore:         number;
-  lastResult:      "WIN" | "LOSS" | "DRAW" | null;
-  lastProfit:      number;
-  sessionTrades:   number;
-  sessionWins:     number;
-  sessionProfit:   number;
-  message:         string;
+  active:           boolean;
+  stake:            number;
+  tradePercent:     number;
+  phase:            "idle" | "analyzing" | "trading" | "waiting" | "error";
+  asset:            string;
+  direction:        "UP" | null;
+  upScore:          number;
+  lastResult:       "WIN" | "LOSS" | "DRAW" | null;
+  lastProfit:       number;
+  sessionTrades:    number;
+  sessionWins:      number;
+  sessionProfit:    number;
+  message:          string;
+  /** Unix ms when the current open trade was placed. Null when not in trading phase. */
+  tradeStartedAt:   number | null;
+  /** Max hold window in ms — lets the frontend compute % elapsed without hardcoding it. */
+  tradeWindowMs:    number;
 }
 
 let _s: SessionStatus = {
@@ -42,6 +53,7 @@ let _s: SessionStatus = {
   lastResult: null, lastProfit: 0,
   sessionTrades: 0, sessionWins: 0, sessionProfit: 0,
   message: "Ready",
+  tradeStartedAt: null, tradeWindowMs: TRADE_WINDOW_MS,
 };
 
 // Balance recorded at session start — used for % loss-limit check
@@ -107,13 +119,6 @@ async function findBestSignal(): Promise<{ asset: string; score: number } | null
   }
   return best;
 }
-
-// ─── Tunables ─────────────────────────────────────────────────────────────
-const SCAN_INTERVAL_MS  = 5_000;
-const TRADE_WINDOW_MS   = 300_000; // hold up to 5 min (signals are on 1-min candles; 30 s was too short)
-const CHECK_INTERVAL_MS = 5_000;   // check every 5 s during hold
-const TAKE_PROFIT_PCT   = 0.008;   // +0.8 % (covers 0.2 % round-trip fees + real profit margin)
-const STOP_LOSS_PCT     = 0.004;   // -0.4 % (slightly wider than fees so a bad fill doesn't auto-stop)
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
@@ -219,8 +224,9 @@ async function loop() {
     _s.stake = stake;
 
     // ── Real market BUY on MEXC ───────────────────────────────────────────
-    _s.phase   = "trading";
-    _s.message = `${best.score}/8 signal on ${best.asset} — buying ${stake.toFixed(2)} USDT…`;
+    _s.phase          = "trading";
+    _s.tradeStartedAt = null; // will be set after fill so timer starts from actual entry
+    _s.message        = `${best.score}/8 signal on ${best.asset} — buying ${stake.toFixed(2)} USDT…`;
     logger.info({ asset: best.asset, score: best.score, stake }, "CT: placing MEXC market buy");
 
     let buy;
@@ -234,6 +240,7 @@ async function loop() {
     }
 
     const entryPrice = buy.avgPrice;
+    _s.tradeStartedAt = Date.now(); // timer starts from actual fill
     let tradeId: number | null = null;
     try {
       const [trade] = await db.insert(tradesTable).values({
@@ -328,8 +335,9 @@ async function loop() {
       }).where(eq(accountsTable.id, 1));
     }
 
-    _s.lastResult   = status as "WIN" | "LOSS" | "DRAW";
-    _s.lastProfit   = profitUsdt;
+    _s.lastResult     = status as "WIN" | "LOSS" | "DRAW";
+    _s.lastProfit     = profitUsdt;
+    _s.tradeStartedAt = null; // clear timer — trade is closed
     _s.sessionTrades++;
     if (won) _s.sessionWins++;
     _s.sessionProfit += profitUsdt;
