@@ -9,6 +9,7 @@ import {
   getFreeBalance,
   getPrice,
 } from "../lib/mexcClient";
+import { getGoldenWindow } from "../lib/goldenWindow";
 
 const router = Router();
 
@@ -84,6 +85,24 @@ router.get("/bot/test-mexc", async (req, res) => {
     result.error = (e as Error).message;
     req.log.error({ err: result.error }, "bot/test-mexc: MEXC call failed");
     return res.status(502).json(result);
+  }
+});
+
+/**
+ * GET /session/golden-window
+ * Returns the golden trading window analysis (30-day historical data).
+ * Cached for 6 hours on the server.
+ */
+router.get("/session/golden-window", async (req, res) => {
+  try {
+    const gw = await getGoldenWindow();
+    if (!gw) {
+      return res.status(503).json({ error: "Golden window not yet computed — try again in a moment" });
+    }
+    res.json(gw);
+  } catch (e) {
+    req.log.error(e, "session/golden-window failed");
+    res.status(500).json({ error: "Failed to compute golden window" });
   }
 });
 

@@ -251,6 +251,27 @@ export interface DepositInput {
   momoProvider: DepositInputMomoProvider;
 }
 
+export interface HourStat {
+  /** UTC hour (0–23) */
+  hour: number;
+  wins: number;
+  total: number;
+  /** 0–100 */
+  winRate: number;
+}
+
+export interface GoldenWindow {
+  asset: string;
+  /** Best UTC hour (0–23) */
+  goldenHour: number;
+  /** Historical win rate at the golden hour (0–100) */
+  winRate: number;
+  totalCandlesAnalyzed: number;
+  distribution: HourStat[];
+  /** Unix ms timestamp */
+  computedAt: number;
+}
+
 export type WithdrawalInputMomoProvider = typeof WithdrawalInputMomoProvider[keyof typeof WithdrawalInputMomoProvider];
 
 
@@ -267,7 +288,7 @@ export interface WithdrawalInput {
 }
 
 export type UpdateAccountSettingsBody = {
-  /** Max USDT loss per calendar day. 0 = disabled. */
+  /** Balance loss threshold as a percentage (0–100). Bot stops when balance drops by this % from session start. 0 = disabled. */
   dailyLossLimit?: number;
 };
 

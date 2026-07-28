@@ -2,18 +2,23 @@ import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
 import {
   useListAssets, useGetCandles, useAnalyzePattern, useListTrades,
-  usePlaceTrade, useGetAccount, useUpdateAccountSettings,
+  usePlaceTrade, useGetAccount, useUpdateAccountSettings, useGetGoldenWindow,
   getListTradesQueryKey, getGetAccountQueryKey,
-  getGetCandlesQueryKey, getAnalyzePatternQueryKey,
+  getGetCandlesQueryKey, getAnalyzePatternQueryKey, getGetGoldenWindowQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNotifications } from "../lib/useNotifications";
 import { useDemoMode } from "../lib/DemoModeContext";
 import { useAuth } from "../lib/AuthContext";
 import { apiBase } from "../lib/api";
-import { TrendingUp, TrendingDown, ChevronDown, Clock, CheckCircle, XCircle, FlaskConical, Zap, StopCircle, Activity, ArrowUpToLine, ArrowDownToLine, ShieldCheck, ChevronUp, Wallet, RefreshCw } from "lucide-react";
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart, Bar, Line
+  TrendingUp, TrendingDown, ChevronDown, Clock, CheckCircle, XCircle,
+  FlaskConical, Zap, StopCircle, Activity, ArrowUpToLine, ArrowDownToLine,
+  ShieldCheck, ChevronUp, Wallet, RefreshCw, Target, Minus, Radio
+} from "lucide-react";
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  ComposedChart, Bar, Line, BarChart, Cell
 } from "recharts";
 
 function formatTime(ts: number) {
@@ -122,6 +127,136 @@ function TradeTimer({ closedAt, duration, createdAt }: { closedAt: string | null
   );
 }
 
+function SuperBotPanel({ session, goldenWindow }: { session: any; goldenWindow: any }) {
+  if (!goldenWindow) return null;
+
+  const gh = session?.goldenHour ?? goldenWindow.goldenHour;
+  const gwRate = session?.goldenWinRate ?? goldenWindow.winRate;
+
+  const inWindow = session?.inGoldenWindow ?? false;
+  const minsTo = session?.minsToGoldenWindow ?? 0;
+  const hoursTo = Math.floor(minsTo / 60);
+  const mins = minsTo % 60;
+
+  const isTraded = session?.todayTraded ?? false;
+  const isWait = session?.phase === "golden-wait";
+  const isAnalyze = session?.phase === "analyzing" || session?.phase === "pre-trade";
+  const isTrading = session?.phase === "trading";
+
+  let phaseText = "WAITING FOR WINDOW";
+  let PhaseIcon = Clock;
+
+  if (isTraded) {
+    phaseText = "TODAY COMPLETE";
+    PhaseIcon = CheckCircle;
+  } else if (isTrading) {
+    phaseText = "TRADING NOW";
+    PhaseIcon = Activity;
+  } else if (isAnalyze) {
+    phaseText = "SCANNING INDICATORS";
+    PhaseIcon = Radio;
+  } else if (inWindow) {
+    phaseText = "WINDOW OPEN";
+    PhaseIcon = Zap;
+  }
+
+  return (
+    <div className="p-4 border-b border-border bg-card/20">
+      <div className="flex items-center gap-2 mb-4">
+        <Target className="w-4 h-4 text-yellow-500" />
+        <h3 className="font-bold text-sm tracking-widest text-foreground uppercase">Super Bot</h3>
+        <div className={`ml-auto flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded border uppercase tracking-wider ${
+          isTraded ? "bg-profit/10 border-profit/30 text-profit" :
+          isTrading ? "bg-yellow-400/10 border-yellow-400/30 text-yellow-400" :
+          inWindow ? "bg-yellow-400/10 border-yellow-400/30 text-yellow-400 live-pulse" :
+          "bg-secondary border-border text-muted-foreground"
+        }`}>
+          <PhaseIcon className="w-3 h-3" />
+          {phaseText}
+        </div>
+      </div>
+
+      <div className={`relative overflow-hidden border rounded-xl p-4 transition-all duration-700 ${
+        inWindow && !isTraded ? "border-yellow-500/50 bg-yellow-500/5 shadow-[0_0_15px_rgba(234,179,8,0.1)] glow-gold mb-4" : "border-border bg-background mb-4"
+      }`}>
+        <div className="flex justify-between items-end">
+          <div>
+            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Golden Window</div>
+            <div className="text-3xl font-black font-mono leading-none tracking-tight">
+              {String(gh).padStart(2, '0')}:00 <span className="text-sm text-muted-foreground font-sans">UTC</span>
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Hist. Win Rate</div>
+            <div className="text-lg font-black text-yellow-500">{gwRate}%</div>
+          </div>
+        </div>
+
+        {!inWindow && !isTraded && (
+          <div className="mt-3 pt-3 border-t border-border flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">Opens in</span>
+            <span className="text-sm font-mono font-bold">{hoursTo}h {String(mins).padStart(2, '0')}m</span>
+          </div>
+        )}
+        {inWindow && !isTraded && (
+          <div className="mt-3 pt-3 border-t border-yellow-500/20 flex items-center justify-between">
+            <span className="text-xs text-yellow-500 font-bold flex items-center gap-1.5"><Zap className="w-3.5 h-3.5" /> WINDOW ACTIVE</span>
+            <span className="text-xs font-mono text-yellow-500/80 live-pulse">TRADING OPPORTUNITY</span>
+          </div>
+        )}
+        {isTraded && (
+          <div className="mt-3 pt-3 border-t border-border flex items-center justify-between">
+            <span className="text-xs text-profit font-bold flex items-center gap-1.5"><CheckCircle className="w-3.5 h-3.5" /> TODAY'S TRADE DONE</span>
+            <span className="text-xs font-mono text-muted-foreground">Next in {hoursTo}h {String(mins).padStart(2, '0')}m</span>
+          </div>
+        )}
+
+        <div className="h-16 w-full mt-4">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={goldenWindow.distribution}>
+              <XAxis dataKey="hour" hide />
+              <Tooltip
+                cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                contentStyle={{ background: '#0f1629', border: '1px solid #1e2d4a', borderRadius: 8, fontSize: '10px' }}
+                labelStyle={{ color: '#888' }}
+                itemStyle={{ color: '#eab308' }}
+                formatter={(v: number) => [`${v}%`, 'Win Rate']}
+                labelFormatter={(l: number) => `${String(l).padStart(2, '0')}:00 UTC`}
+              />
+              <Bar dataKey="winRate" radius={[2,2,0,0]}>
+                {goldenWindow.distribution.map((entry: any, index: number) => (
+                  <Cell key={`cell-${index}`} fill={entry.hour === gh ? '#eab308' : '#334155'} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {session?.indicators && (isWait || isAnalyze || inWindow || isTrading) && !isTraded && (
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5"><Radio className="w-3 h-3" /> Live Indicators</span>
+            <span className="text-xs font-mono font-bold text-primary">{session.superScore} / {session.superTotal} <span className="text-muted-foreground font-sans text-[10px]">UP</span></span>
+          </div>
+          <div className="grid grid-cols-3 gap-1.5">
+            {session.indicators.map((ind: any, i: number) => (
+              <div key={i} className={`flex items-center justify-between px-2 py-1.5 rounded border text-[9px] font-bold ${
+                ind.result === 'UP' ? 'bg-profit/10 border-profit/20 text-profit' :
+                ind.result === 'DOWN' ? 'bg-loss/10 border-loss/20 text-loss' :
+                'bg-secondary border-border text-muted-foreground'
+              }`}>
+                <span className="truncate mr-1">{ind.name}</span>
+                {ind.result === 'UP' ? <TrendingUp className="w-3 h-3" /> : ind.result === 'DOWN' ? <TrendingDown className="w-3 h-3" /> : <Minus className="w-3 h-3" />}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Trade() {
   const [selectedSymbol, setSelectedSymbol] = useState("EURUSD");
   const [tradePercent, setTradePercent] = useState(50);
@@ -198,6 +333,7 @@ export default function Trade() {
   const { data: pattern } = useAnalyzePattern(selectedSymbol, { query: { enabled: !!selectedSymbol, refetchInterval: 15000, queryKey: getAnalyzePatternQueryKey(selectedSymbol) } });
   const { data: trades, refetch: refetchTrades } = useListTrades({ query: { refetchInterval: 1000, queryKey: getListTradesQueryKey() } });
   const { data: account } = useGetAccount({ query: { refetchInterval: 1000, queryKey: getGetAccountQueryKey() } });
+  const { data: goldenWindow } = useGetGoldenWindow({ query: { refetchInterval: 3600000, queryKey: getGetGoldenWindowQueryKey() } });
   const updateSettings = useUpdateAccountSettings();
 
   // Sync loss limit input from server once on load
@@ -579,6 +715,10 @@ export default function Trade() {
 
         {/* Right — Trade Panel */}
         <div className="flex flex-col border-t lg:border-t-0 border-border">
+          
+          {/* Super Bot Panel */}
+          <SuperBotPanel session={session} goldenWindow={goldenWindow} />
+
           {/* Trade Controls */}
           <div className={`p-4 border-b border-border ${isDemo ? "bg-purple-500/5" : ""}`}>
             <h3 className="font-bold mb-4 flex items-center gap-2">
@@ -802,7 +942,7 @@ export default function Trade() {
                     </div>
                   ) : (
                     <div className="flex items-center gap-2">
-                      {session.phase === "analyzing" || session.phase === "waiting" ? (
+                      {session.phase === "analyzing" || session.phase === "waiting" || session.phase === "golden-wait" ? (
                         <div className="w-1.5 h-1.5 bg-primary rounded-full live-pulse shrink-0" />
                       ) : session.lastResult === "WIN" ? (
                         <CheckCircle className="w-3.5 h-3.5 text-profit shrink-0" />

@@ -48,7 +48,7 @@ export const GetAccountResponse = zod.object({
  * @summary Update account settings (daily loss limit, trade percentage, etc.)
  */
 export const UpdateAccountSettingsBody = zod.object({
-  "dailyLossLimit": zod.number().optional().describe('Max USDT loss per calendar day. 0 = disabled.')
+  "dailyLossLimit": zod.number().optional().describe('Balance loss threshold as a percentage (0–100). Bot stops when balance drops by this % from session start. 0 = disabled.')
 })
 
 export const UpdateAccountSettingsResponse = zod.object({
@@ -121,6 +121,24 @@ export const GetCandlesResponseItem = zod.object({
   "volume": zod.number()
 })
 export const GetCandlesResponse = zod.array(GetCandlesResponseItem)
+
+
+/**
+ * @summary Get the 30-day golden trading window analysis
+ */
+export const GetGoldenWindowResponse = zod.object({
+  "asset": zod.string(),
+  "goldenHour": zod.number().describe('Best UTC hour (0–23)'),
+  "winRate": zod.number().describe('Historical win rate at the golden hour (0–100)'),
+  "totalCandlesAnalyzed": zod.number(),
+  "distribution": zod.array(zod.object({
+  "hour": zod.number().describe('UTC hour (0–23)'),
+  "wins": zod.number(),
+  "total": zod.number(),
+  "winRate": zod.number().describe('0–100')
+})),
+  "computedAt": zod.number().describe('Unix ms timestamp')
+})
 
 
 /**

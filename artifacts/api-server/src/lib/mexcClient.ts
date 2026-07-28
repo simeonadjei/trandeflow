@@ -85,6 +85,7 @@ async function privatePost(path: string, params: Record<string, string | number>
 // ─── Public endpoints (no auth) ──────────────────────────────────────────────
 
 export interface Candle {
+  openTime: number; // ms since epoch
   open: number; close: number;
   high: number; low: number;
   volume: number;
@@ -104,6 +105,7 @@ export async function getKlines(symbol: string, count = 30, interval = "1m"): Pr
   if (!res.ok) throw new Error(`MEXC klines error ${res.status}: ${JSON.stringify(json)}`);
   // Each row: [openTime, open, high, low, close, volume, closeTime, ...]
   return (json as any[][]).map((r) => ({
+    openTime: parseInt(r[0]),
     open:   parseFloat(r[1]),
     high:   parseFloat(r[2]),
     low:    parseFloat(r[3]),

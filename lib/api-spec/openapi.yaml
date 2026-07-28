@@ -121,6 +121,19 @@ paths:
                 items:
                   $ref: "#/components/schemas/Candle"
 
+  /session/golden-window:
+    get:
+      operationId: getGoldenWindow
+      tags: [patterns]
+      summary: Get the 30-day golden trading window analysis
+      responses:
+        "200":
+          description: Golden window analysis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GoldenWindow"
+
   /assets/{symbol}/pattern:
     get:
       operationId: analyzePattern
@@ -549,6 +562,43 @@ components:
         momoProvider:
           type: string
           enum: [MTN, VODAFONE, AIRTELTIGO]
+
+    HourStat:
+      type: object
+      required: [hour, wins, total, winRate]
+      properties:
+        hour:
+          type: integer
+          description: UTC hour (0–23)
+        wins:
+          type: integer
+        total:
+          type: integer
+        winRate:
+          type: number
+          description: 0–100
+
+    GoldenWindow:
+      type: object
+      required: [asset, goldenHour, winRate, totalCandlesAnalyzed, distribution, computedAt]
+      properties:
+        asset:
+          type: string
+        goldenHour:
+          type: integer
+          description: Best UTC hour (0–23)
+        winRate:
+          type: number
+          description: Historical win rate at the golden hour (0–100)
+        totalCandlesAnalyzed:
+          type: integer
+        distribution:
+          type: array
+          items:
+            $ref: "#/components/schemas/HourStat"
+        computedAt:
+          type: integer
+          description: Unix ms timestamp
 
     WithdrawalInput:
       type: object

@@ -28,6 +28,7 @@ import type {
   Candle,
   Deposit,
   DepositInput,
+  GoldenWindow,
   HealthStatus,
   PatternAnalysis,
   Trade,
@@ -493,6 +494,83 @@ export function useGetCandles<TData = Awaited<ReturnType<typeof getCandles>>, TE
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetCandlesQueryOptions(symbol,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getGetGoldenWindowUrl = () => {
+
+
+
+
+  return `/api/session/golden-window`
+}
+
+/**
+ * @summary Get the 30-day golden trading window analysis
+ */
+export const getGoldenWindow = async ( options?: RequestInit): Promise<GoldenWindow> => {
+
+  return customFetch<GoldenWindow>(getGetGoldenWindowUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetGoldenWindowQueryKey = () => {
+    return [
+    `/api/session/golden-window`
+    ] as const;
+    }
+
+
+export const getGetGoldenWindowQueryOptions = <TData = Awaited<ReturnType<typeof getGoldenWindow>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getGoldenWindow>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetGoldenWindowQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getGoldenWindow>>> = ({ signal }) => getGoldenWindow({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getGoldenWindow>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetGoldenWindowQueryResult = NonNullable<Awaited<ReturnType<typeof getGoldenWindow>>>
+export type GetGoldenWindowQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get the 30-day golden trading window analysis
+ */
+
+export function useGetGoldenWindow<TData = Awaited<ReturnType<typeof getGoldenWindow>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getGoldenWindow>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetGoldenWindowQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
