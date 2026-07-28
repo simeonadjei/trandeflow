@@ -19,5 +19,11 @@ app.listen(port, (err) => {
     process.exit(1);
   }
   logger.info({ port }, "Server listening");
+  // Debug: log whether MEXC keys are present (not values)
+  logger.info({
+    mexcKeyLen: (process.env["MEXC_API_KEY"] ?? "").length,
+    mexcSecretLen: (process.env["MEXC_API_SECRET"] ?? "").length,
+    mexcKeyPrefix: (process.env["MEXC_API_KEY"] ?? "").substring(0, 4),
+  }, "MEXC credential check at startup");
   initContinuousTrader().catch(e => logger.error(e, "CT init failed"));
 });
