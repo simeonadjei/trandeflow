@@ -14,7 +14,12 @@ if (!connectionString) {
   );
 }
 
-export const pool = new Pool({ connectionString });
+// Neon (and most managed Postgres) requires SSL
+const isNeon = connectionString.includes("neon.tech");
+export const pool = new Pool({
+  connectionString,
+  ssl: isNeon ? { rejectUnauthorized: false } : undefined,
+});
 export const db = drizzle(pool, { schema });
 
 export * from "./schema";
