@@ -138,7 +138,6 @@ router.get("/account/stats", async (req, res) => {
 });
 
 // ── Continuous trading session (MEXC execution) ──────────────────────────────
-const MIN_STAKE_USDT = 1;
 
 router.post("/session/start", async (req, res) => {
   try {
@@ -146,27 +145,6 @@ router.post("/session/start", async (req, res) => {
       return res.status(400).json({
         error: "mexc_not_connected",
         message: "MEXC API keys are not configured. Add MEXC_API_KEY and MEXC_API_SECRET.",
-      });
-    }
-
-    // Check live MEXC USDT balance
-    let usdtBalance = 0;
-    try {
-      usdtBalance = await getFreeBalance("USDT");
-    } catch (err) {
-      req.log.error(err, "Failed to fetch MEXC balance");
-      return res.status(502).json({
-        error: "mexc_unreachable",
-        message: `Could not reach MEXC to check your balance: ${(err as Error).message}`,
-      });
-    }
-
-    if (usdtBalance < MIN_STAKE_USDT) {
-      return res.status(400).json({
-        error: "insufficient_balance",
-        message: `Need at least ${MIN_STAKE_USDT} USDT free on MEXC to start. Current: ${usdtBalance.toFixed(2)} USDT.`,
-        currentBalance: usdtBalance,
-        minimumRequired: MIN_STAKE_USDT,
       });
     }
 

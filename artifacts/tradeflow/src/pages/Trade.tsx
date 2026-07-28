@@ -206,15 +206,10 @@ export default function Trade() {
     }
   }, [account?.dailyLossLimit]);
 
-  // In real mode: use MEXC free USDT as the effective balance (min 1 USDT to start).
-  // If MEXC is connected but we haven't received balance data yet (null = loading),
-  // treat balance as sufficient so buttons aren't permanently disabled on load.
-  const MIN_TRADE_BALANCE_USDT = 1;
-  const mexcBalanceLoading = account?.mexcConnected && account?.mexcFreeUsdt == null;
+  // In real mode: use MEXC free USDT as the effective balance.
   const realEffectiveBalance = account?.mexcConnected && account?.mexcFreeUsdt != null
     ? account.mexcFreeUsdt
     : (account?.balance ?? 0);
-  const realBalanceSufficient = mexcBalanceLoading || realEffectiveBalance >= MIN_TRADE_BALANCE_USDT;
 
   const handleStartSession = async () => {
     // Guard: must have at least 1 USDT free on MEXC before bot can run
@@ -282,15 +277,8 @@ export default function Trade() {
     placeTrade.mutate({ data: { symbol: selectedSymbol, direction, amount, duration: 60, isDemo } });
   };
 
-  // In real mode let the server enforce balance — only block on the client
-  // when we have a confirmed non-null mexcFreeUsdt that is definitely too low.
-  // A stale/null balance should never permanently disable the buttons.
   const tradeBlocked = placeTrade.isPending || (
-    isDemo
-      ? (displayBalance < amount || displayBalance <= 0)
-      : account?.mexcConnected && account?.mexcFreeUsdt != null
-        ? account.mexcFreeUsdt < amount
-        : false
+    isDemo ? (displayBalance < amount || displayBalance <= 0) : false
   );
 
   const signalColor = pattern?.signal === "BUY" ? "text-profit" : pattern?.signal === "SELL" ? "text-loss" : "text-yellow-400";
@@ -745,14 +733,33 @@ export default function Trade() {
                       Need ≥ {displayCurrency} {amount} demo balance
                     </p>
                   )}
-                  {!isDemo && account?.mexcConnected && account?.mexcFreeUsdt != null && account.mexcFreeUsdt < amount && (
-                    <p className="text-[11px] text-center text-yellow-400">
-                      Need ≥ {amount} USDT free on MEXC (you have {account.mexcFreeUsdt.toFixed(4)})
-                    </p>
-                  )}
                 </div>
               );
             })()}
+
+            {/* Spot Balance — shown below trade buttons in real mode */}
+            {!isDemo && account?.mexcConnected && (
+              <div className="mb-4 bg-card border border-primary/20 rounded-xl p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                    <Wallet className="w-3.5 h-3.5 text-primary" />
+                    Spot Balance (MEXC)
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-black text-primary">
+                      {(account.mexcFreeUsdt ?? 0).toFixed(4)} USDT
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">Free to trade</div>
+                  </div>
+                </div>
+                {(account.mexcLockedUsdt ?? 0) > 0 && (
+                  <div className="flex justify-between text-[11px] border-t border-border pt-1.5 mt-1.5">
+                    <span className="text-muted-foreground">In Orders</span>
+                    <span className="font-mono font-semibold text-yellow-400">{(account.mexcLockedUsdt ?? 0).toFixed(4)} USDT</span>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* ── Bot TRADE / STOP Button ── */}
             <div className="border-t border-border pt-3 mt-1 space-y-3">
@@ -853,32 +860,10 @@ export default function Trade() {
                 </div>
               )}
 
-              {/* Low balance warning — shown alongside TRADE button, not instead of it */}
-              {!isDemo && !session?.active && !realBalanceSufficient && (
-                <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-3 flex items-start gap-2">
-                  <span className="text-yellow-400 text-sm mt-0.5">⚠</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-semibold text-yellow-400">Low Spot Balance</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      Need ≥ {MIN_TRADE_BALANCE_USDT} USDT in your MEXC Spot wallet to trade.
-                      Current: <span className="font-bold text-foreground">{realEffectiveBalance.toFixed(4)} USDT</span>
-                    </p>
-                    <a
-                      href="https://www.mexc.com/assets/spot/deposit"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 mt-1.5 text-[11px] font-bold text-profit hover:underline"
-                    >
-                      <ArrowUpToLine className="w-3 h-3" /> Deposit on MEXC
-                    </a>
-                  </div>
-                </div>
-              )}
-
               {!session?.active ? (
                 <button
                   onClick={handleStartSession}
-                  disabled={sessionLoading || isDemo || (!isDemo && !realBalanceSufficient)}
+                  disabled={sessionLoading || isDemo}
                   className="w-full py-3.5 rounded-xl font-black text-sm tracking-wide bg-primary hover:bg-primary/90 text-primary-foreground transition-all disabled:opacity-40 flex items-center justify-center gap-2 shadow-lg shadow-primary/20"
                 >
                   <Activity className="w-4 h-4" />
@@ -901,46 +886,6 @@ export default function Trade() {
             </div>
           </div>
 
-          {/* Spot Balance */}
-          {!isDemo && account?.mexcConnected && (
-            <div className="px-4 pb-4">
-              <div className="bg-card border border-primary/20 rounded-xl p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                    <Wallet className="w-3.5 h-3.5 text-primary" />
-                    Spot Balance
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-black text-primary">
-                      {(account.mexcFreeUsdt ?? 0).toFixed(4)} USDT
-                    </div>
-                    <div className="text-[10px] text-muted-foreground">Free to trade</div>
-                  </div>
-                </div>
-                {/* Breakdown */}
-                <div className="space-y-1 border-t border-border pt-2">
-                  {(account.mexcFreeUsdt ?? 0) > 0 && (
-                    <div className="flex justify-between text-[11px]">
-                      <span className="text-muted-foreground">Free USDT</span>
-                      <span className="font-mono font-semibold text-profit">{(account.mexcFreeUsdt ?? 0).toFixed(4)}</span>
-                    </div>
-                  )}
-                  {(account.mexcLockedUsdt ?? 0) > 0 && (
-                    <div className="flex justify-between text-[11px]">
-                      <span className="text-muted-foreground">In Orders (USDT)</span>
-                      <span className="font-mono font-semibold text-yellow-400">{(account.mexcLockedUsdt ?? 0).toFixed(4)}</span>
-                    </div>
-                  )}
-                  {account.mexcBreakdown?.filter(b => b.asset !== "USDT" && b.valueUsdt > 0).map(b => (
-                    <div key={b.asset} className="flex justify-between text-[11px]">
-                      <span className="text-muted-foreground">{b.asset} ({(b.free + b.locked).toFixed(6)})</span>
-                      <span className="font-mono font-semibold text-foreground">≈ {b.valueUsdt.toFixed(4)} USDT</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Open Trades */}
           <div className="p-4 flex-1">
