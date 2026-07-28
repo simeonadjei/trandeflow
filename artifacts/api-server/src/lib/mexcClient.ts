@@ -19,9 +19,12 @@ import { logger } from "./logger";
 const BASE = "https://api.mexc.com";
 
 function getCreds() {
+  // Strip invisible Unicode formatting characters (e.g. U+200E LRM, U+200B ZWSP,
+  // U+FEFF BOM) that can appear when copy-pasting keys from PDFs or chat apps.
+  const clean = (s: string) => s.replace(/[^\x20-\x7E]/g, "").trim();
   return {
-    apiKey:    process.env.MEXC_API_KEY    ?? "",
-    apiSecret: process.env.MEXC_API_SECRET ?? "",
+    apiKey:    clean(process.env.MEXC_API_KEY    ?? ""),
+    apiSecret: clean(process.env.MEXC_API_SECRET ?? ""),
   };
 }
 
