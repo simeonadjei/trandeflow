@@ -891,6 +891,29 @@ export default function Trade() {
                       </div>
                     </div>
                   </div>
+
+                  {/* Live event log */}
+                  {session.recentEvents && session.recentEvents.length > 0 && (
+                    <div className="mt-2 border-t border-border pt-2">
+                      <div className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Bot Log</div>
+                      <div className="space-y-0.5 max-h-40 overflow-y-auto">
+                        {[...session.recentEvents].reverse().map((ev: string, i: number) => (
+                          <div
+                            key={i}
+                            className={`text-[10px] font-mono leading-tight px-1 rounded ${
+                              ev.includes("ERROR") ? "text-loss" :
+                              ev.includes("WARN") ? "text-yellow-400" :
+                              ev.includes("BUY filled") || ev.includes("SELL filled") || ev.includes("Trade closed") ? "text-profit font-semibold" :
+                              ev.includes("Signal:") || ev.includes("Pre-trade") ? "text-primary" :
+                              "text-muted-foreground"
+                            }`}
+                          >
+                            {ev}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

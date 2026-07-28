@@ -57,6 +57,20 @@ export interface SessionStatus {
   tradeStartedAt:   number | null;
   /** Max hold window in ms — lets the frontend compute % elapsed. */
   tradeWindowMs:    number;
+  /** Last 30 bot events for real-time diagnostics in the UI */
+  recentEvents:     string[];
+}
+
+// ─── In-memory event log ──────────────────────────────────────────────────────
+const MAX_EVENTS = 30;
+const _events: string[] = [];
+
+function logEvent(msg: string) {
+  const ts = new Date().toLocaleTimeString("en-GB", { hour12: false });
+  const line = `[${ts}] ${msg}`;
+  _events.push(line);
+  if (_events.length > MAX_EVENTS) _events.shift();
+  logger.info(msg, "CT:event");
 }
 
 let _s: SessionStatus = {
@@ -67,11 +81,12 @@ let _s: SessionStatus = {
   sessionTrades: 0, sessionWins: 0, sessionProfit: 0,
   message: "Ready",
   tradeStartedAt: null, tradeWindowMs: TRADE_WINDOW_MS,
+  recentEvents: [],
 };
 
 let _sessionStartBalanceUsdt: number | null = null;
 
-export function getSessionStatus(): SessionStatus { return { ..._s }; }
+export function getSessionStatus(): SessionStatus { return { ..._s, recentEvents: [..._events] }; }
 
 // ─── Indicators ──────────────────────────────────────────────────────────────
 
@@ -254,11 +269,12 @@ async function loop() {
     if (!(await isEnabled())) {
       _s.active = false; _s.phase = "idle"; _s.message = "Stopped";
       _loopRunning = false;
-      logger.info("CT: session stopped");
+      logEvent("Session stopped.");
       return;
     }
 
     if (!hasMexcCredentials()) {
+      logEvent("ERROR: MEXC API keys not configured");
       _s.phase   = "error";
       _s.message = "MEXC API keys not configured";
       await sleep(10_000);
@@ -277,7 +293,7 @@ async function loop() {
       catch { current = _sessionStartBalanceUsdt; }
       const dropPct = (_sessionStartBalanceUsdt - current) / _sessionStartBalanceUsdt * 100;
       if (dropPct >= lossLimitPct) {
-        logger.warn({ dropPct, lossLimitPct }, "CT: balance loss limit reached — stopping");
+        logEvent(`STOPPED: loss limit hit — balance dropped ${dropPct.toFixed(1)}%`);
         await db.update(accountsTable).set({ autoInvestEnabled: false }).where(eq(accountsTable.id, 1));
         _s.active = false; _s.phase = "idle";
         _s.message = `Loss limit hit: balance dropped ${dropPct.toFixed(1)}%. Session stopped.`;
@@ -289,48 +305,26 @@ async function loop() {
     // ── Prediction scan ───────────────────────────────────────────────────
     _s.phase   = "analyzing";
     _s.message = "Analysing 15m trend + 1m entry on BTCUSDT / ETHUSDT…";
+    logEvent("Scanning BTCUSDT / ETHUSDT…");
 
     let best: BestSignal | null;
     try {
       best = await findBestPrediction();
     } catch (e) {
-      logger.error(e, "CT: prediction scan failed");
+      logEvent(`ERROR: scan failed — ${(e as Error).message}`);
       _s.phase = "error"; _s.message = "Scan failed, retrying…";
       await sleep(SCAN_INTERVAL_MS);
       continue;
     }
 
     if (!best) {
-      // Show the latest scores even when no trade fires — helps user understand why
-      const lastScores = await (async () => {
-        try {
-          const r = await Promise.allSettled(
-            ASSETS.map(async a => {
-              const candles15m = await getKlines(a, 24, "15m");
-              const candles1m  = await getKlines(a, 30, "1m");
-              return { a, candles15m, candles1m };
-            })
-          );
-          // Just grab the best UP score for the status message
-          let bestUp = 0, bestAsset = ASSETS[0];
-          for (const res of r) {
-            if (res.status === "fulfilled") {
-              const { a, candles15m, candles1m } = res.value;
-              if (candles15m.length >= 22 && candles1m.length >= 10) {
-                // Quick re-score without full predictDirection to avoid duplication
-                bestAsset = a;
-              }
-            }
-          }
-          return { bestAsset };
-        } catch { return { bestAsset: ASSETS[0] }; }
-      })();
       _s.upScore       = 0;
       _s.downScore     = 0;
       _s.winConfidence = 0;
       _s.direction     = null;
       _s.phase         = "waiting";
-      _s.message       = `UP score < 5/8 or bearish pressure too high on ${lastScores.bestAsset} — scanning again…`;
+      _s.message       = "No signal: UP score < 5/8 or bearish pressure too high — scanning again…";
+      logEvent("No signal this cycle (UP < 5/8 or DOWN dominant) — waiting 10s");
       await sleep(SCAN_INTERVAL_MS);
       continue;
     }
@@ -341,41 +335,44 @@ async function loop() {
     _s.downScore     = prediction.downScore;
     _s.winConfidence = prediction.confidence;
     _s.direction     = prediction.direction;
+    logEvent(`Signal: UP on ${asset} — UP ${prediction.upScore}/8, DN ${prediction.downScore}/8, conf ${prediction.confidence}%`);
 
     // ── Pre-trade countdown (no DB checks inside — avoids false-stop on transient errors) ──
     _s.phase = "pre-trade";
+    logEvent(`Pre-trade countdown starting (${PRE_TRADE_SECS}s)…`);
     for (let t = PRE_TRADE_SECS; t > 0; t--) {
       _s.preTradeIn = t;
       _s.message    = `UP on ${asset} — ${prediction.confidence}% confidence — entering in ${t}s`;
       await sleep(1_000);
     }
     _s.preTradeIn = 0;
+    logEvent("Countdown done — checking session still active");
 
     // Only bail if user explicitly stopped (not on DB errors)
     if (!(await isEnabled())) {
-      logger.info("CT: stopped by user during pre-trade countdown");
+      logEvent("Session was stopped during countdown — skipping trade");
       continue;
     }
 
     // ── Check USDT balance ────────────────────────────────────────────────
-    logger.info({ asset, tradePercent }, "CT: post-countdown — fetching MEXC balance");
+    logEvent(`Fetching MEXC USDT balance (tradePercent=${tradePercent}%)`);
     let freeUsdt: number;
     try {
       freeUsdt = await getFreeBalance("USDT");
-      logger.info({ freeUsdt }, "CT: MEXC USDT balance fetched");
+      logEvent(`Balance: ${freeUsdt.toFixed(4)} USDT free`);
     } catch (e) {
-      logger.error({ err: (e as Error).message }, "CT: failed to fetch MEXC balance");
+      logEvent(`ERROR fetching balance: ${(e as Error).message}`);
       _s.phase = "error"; _s.message = `Balance check failed: ${(e as Error).message}`;
       await sleep(10_000);
       continue;
     }
 
     const stake = parseFloat((freeUsdt * tradePercent / 100).toFixed(2));
-    logger.info({ freeUsdt, tradePercent, stake, MIN_STAKE_USDT }, "CT: computed stake");
+    logEvent(`Stake = ${stake.toFixed(4)} USDT (${tradePercent}% of ${freeUsdt.toFixed(4)})`);
     if (stake < MIN_STAKE_USDT) {
+      logEvent(`ERROR: stake ${stake} USDT below minimum ${MIN_STAKE_USDT} USDT — skipping`);
       _s.phase   = "error";
       _s.message = `Balance too low: ${freeUsdt.toFixed(4)} USDT free, need ≥ ${MIN_STAKE_USDT} USDT to trade`;
-      logger.warn({ freeUsdt, stake }, "CT: balance too low to trade");
       await sleep(15_000);
       continue;
     }
@@ -385,18 +382,17 @@ async function loop() {
     _s.phase          = "trading";
     _s.tradeStartedAt = null;
     _s.message        = `Placing BUY: ${asset} ${stake.toFixed(4)} USDT…`;
-    logger.info({ asset, confidence: prediction.confidence, upScore: prediction.upScore, stake }, "CT: placing market BUY");
+    logEvent(`Placing MARKET BUY: ${asset} ${stake.toFixed(4)} USDT…`);
 
     let buy;
     try {
       buy = await marketBuy(asset, stake);
-      logger.info({ orderId: buy.orderId, avgPrice: buy.avgPrice, baseQty: buy.baseQty, quoteQty: buy.quoteQty }, "CT: BUY filled");
+      logEvent(`BUY filled: orderId=${buy.orderId} qty=${buy.baseQty} @ ${buy.avgPrice} spent=${buy.quoteQty}`);
     } catch (e) {
       const errMsg = (e as Error).message;
-      logger.error({ err: errMsg }, "CT: MEXC marketBuy failed — stopping session");
+      logEvent(`ERROR: marketBuy failed — ${errMsg}`);
       _s.phase   = "error";
       _s.message = `Buy failed — session stopped. Error: ${errMsg}. Restart the bot to try again.`;
-      // Stop the session so the error stays visible and the user must restart manually
       await db.update(accountsTable).set({ autoInvestEnabled: false }).where(eq(accountsTable.id, 1));
       _s.active  = false;
       _loopRunning = false;
@@ -405,7 +401,7 @@ async function loop() {
 
     // Guard: MEXC returned zero fill — order was accepted but not executed
     if (!buy.baseQty || buy.baseQty <= 0) {
-      logger.error({ buy }, "CT: BUY order returned zero baseQty — order not filled");
+      logEvent(`ERROR: BUY returned qty=0 — order not filled. Check MEXC permissions.`);
       _s.phase   = "error";
       _s.message = `Buy not filled (qty=0) — session stopped. Check MEXC permissions and minimum order size (≥ ${MIN_STAKE_USDT} USDT). Restart to retry.`;
       await db.update(accountsTable).set({ autoInvestEnabled: false }).where(eq(accountsTable.id, 1));
@@ -416,6 +412,8 @@ async function loop() {
 
     const entryPrice      = buy.avgPrice;
     _s.tradeStartedAt     = Date.now();
+    logEvent(`Trade open: entry @ ${entryPrice} — holding up to 5 min (TP +0.8%, SL -0.4%)`);
+
     let tradeId: number | null = null;
     try {
       const [trade] = await db.insert(tradesTable).values({
@@ -433,7 +431,7 @@ async function loop() {
       }).returning();
       tradeId = trade.id;
     } catch (e) {
-      logger.error(e, "CT: failed to record trade in DB — position still open on MEXC");
+      logEvent(`WARN: DB insert failed — position open on MEXC but not recorded`);
     }
 
     // ── Monitor hold window ────────────────────────────────────────────────
@@ -446,7 +444,7 @@ async function loop() {
       try {
         price = await getPrice(asset);
       } catch (e) {
-        logger.warn(e, "CT: mid-trade price check failed, holding");
+        logEvent(`WARN: price check failed mid-trade — holding`);
         continue;
       }
 
@@ -459,13 +457,16 @@ async function loop() {
       if (!(await isEnabled()))       { exitReason = "signal_reversed"; break; }
     }
 
+    logEvent(`Exit triggered: ${exitReason} — placing SELL`);
+
     // ── Exit position ──────────────────────────────────────────────────────
     _s.message = `Exiting ${asset} (${exitReason})…`;
     let sell;
     try {
       sell = await marketSell(asset, buy.baseQty);
+      logEvent(`SELL filled: received=${sell.quoteQty} USDT @ ${sell.avgPrice}`);
     } catch (e) {
-      logger.error(e, "CT: MEXC SELL FAILED — check MEXC manually");
+      logEvent(`ERROR: SELL FAILED — ${(e as Error).message} — check MEXC manually!`);
       _s.phase   = "error";
       _s.message = `Sell failed — check MEXC manually: ${(e as Error).message}`;
       await sleep(10_000);
@@ -475,6 +476,7 @@ async function loop() {
     const profitUsdt = parseFloat((sell.quoteQty - stake).toFixed(4));
     const status     = profitUsdt > 0 ? "WIN" : profitUsdt < 0 ? "LOSS" : "DRAW";
     const won        = profitUsdt > 0;
+    logEvent(`Trade closed: ${status} ${profitUsdt >= 0 ? "+" : ""}${profitUsdt.toFixed(4)} USDT`);
 
     if (tradeId) {
       await db.update(tradesTable)
@@ -514,7 +516,6 @@ async function loop() {
     _s.phase   = "waiting";
     _s.message = `${won ? "✓ WON" : profitUsdt < 0 ? "✗ LOST" : "= FLAT"} ${profitUsdt >= 0 ? "+" : ""}${profitUsdt.toFixed(4)} USDT on ${asset} (${exitReason})`;
 
-    logger.info({ asset, status, profitUsdt, exitReason }, "CT: trade closed");
     await sleep(500);
   }
 }
