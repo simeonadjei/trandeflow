@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
 import {
   useListAssets, useGetCandles, useAnalyzePattern, useListTrades,
-  usePlaceTrade, useGetAccount,
+  usePlaceTrade, useGetAccount, useUpdateAccountSettings,
   getListTradesQueryKey, getGetAccountQueryKey,
   getGetCandlesQueryKey, getAnalyzePatternQueryKey,
 } from "@workspace/api-client-react";
@@ -130,6 +130,9 @@ export default function Trade() {
   const [sessionLoading, setSessionLoading] = useState(false);
   const [adminStats, setAdminStats] = useState<any>(null);
   const [adminPanelOpen, setAdminPanelOpen] = useState(true);
+  const [lossLimitInput, setLossLimitInput] = useState("");
+  const [lossLimitSaving, setLossLimitSaving] = useState(false);
+  const [lossLimitSaved, setLossLimitSaved] = useState(false);
 
   const { isDemo, toggleDemo } = useDemoMode();
   const { user, logout, token, isAdmin } = useAuth();
@@ -191,6 +194,14 @@ export default function Trade() {
   const { data: pattern } = useAnalyzePattern(selectedSymbol, { query: { enabled: !!selectedSymbol, refetchInterval: 15000, queryKey: getAnalyzePatternQueryKey(selectedSymbol) } });
   const { data: trades, refetch: refetchTrades } = useListTrades({ query: { refetchInterval: 3000, queryKey: getListTradesQueryKey() } });
   const { data: account } = useGetAccount({ query: { refetchInterval: 3000, queryKey: getGetAccountQueryKey() } });
+  const updateSettings = useUpdateAccountSettings();
+
+  // Sync loss limit input from server once on load
+  useEffect(() => {
+    if (account?.dailyLossLimit !== undefined && lossLimitInput === "") {
+      setLossLimitInput(account.dailyLossLimit === 0 ? "" : String(account.dailyLossLimit));
+    }
+  }, [account?.dailyLossLimit]);
 
   // In real mode: use MEXC free USDT as the effective balance (min 1 USDT to start).
   // If MEXC is connected but we haven't received balance data yet (null = loading),
@@ -621,6 +632,53 @@ export default function Trade() {
                 Adjust the % slider above to change this, or type an amount to sync the slider.
               </p>
             </div>
+
+            {/* Daily loss limit */}
+            {!isDemo && (
+              <div className="mb-4 border border-border rounded-lg p-3 bg-card/50">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <ShieldCheck className="w-3.5 h-3.5 text-yellow-400" />
+                  <span className="text-xs font-semibold text-muted-foreground">Daily Loss Limit (USDT)</span>
+                  {(account?.dailyLossLimit ?? 0) > 0 && (
+                    <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-yellow-400/15 border border-yellow-400/30 text-yellow-400 font-semibold">
+                      Active: {account!.dailyLossLimit} USDT
+                    </span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    placeholder="0 = disabled"
+                    value={lossLimitInput}
+                    onChange={(e) => { setLossLimitInput(e.target.value); setLossLimitSaved(false); }}
+                    className="flex-1 bg-background border border-border rounded-lg px-3 py-1.5 text-sm font-mono focus:outline-none focus:border-primary transition-colors"
+                  />
+                  <button
+                    disabled={lossLimitSaving}
+                    onClick={async () => {
+                      setLossLimitSaving(true);
+                      try {
+                        const val = parseFloat(lossLimitInput) || 0;
+                        await updateSettings.mutateAsync({ data: { dailyLossLimit: val } });
+                        queryClient.invalidateQueries({ queryKey: getGetAccountQueryKey() });
+                        setLossLimitSaved(true);
+                        setTimeout(() => setLossLimitSaved(false), 2000);
+                      } finally {
+                        setLossLimitSaving(false);
+                      }
+                    }}
+                    className="px-3 py-1.5 text-xs font-bold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+                  >
+                    {lossLimitSaving ? "…" : lossLimitSaved ? "✓" : "Save"}
+                  </button>
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-1.5">
+                  Bot stops automatically when today's losses reach this amount. Set to 0 to disable.
+                </p>
+              </div>
+            )}
 
             {/* Payout info */}
             {selectedAsset && (

@@ -67,6 +67,7 @@ router.get("/account", async (req, res) => {
       mexcLockedUsdt,
       mexcCryptoValueUsdt,
       mexcBreakdown,
+      dailyLossLimit: parseFloat(account.dailyLossLimit as string),
       // kept for backward compat
       coinbaseConnected: false,
       coinbaseBalanceUsd: null,
@@ -74,6 +75,46 @@ router.get("/account", async (req, res) => {
   } catch (err) {
     req.log.error(err);
     res.status(500).json({ error: "Failed to get account" });
+  }
+});
+
+router.patch("/account/settings", async (req, res) => {
+  try {
+    const { dailyLossLimit } = req.body ?? {};
+    const updates: Record<string, string> = {};
+    if (dailyLossLimit !== undefined) {
+      const val = Math.max(0, parseFloat(dailyLossLimit));
+      updates.dailyLossLimit = val.toFixed(2);
+    }
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: "No valid fields to update" });
+    }
+    await db.update(accountsTable).set(updates).where(eq(accountsTable.id, 1));
+    const account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
+    res.json({
+      id: account!.id,
+      name: account!.name,
+      balance: parseFloat(account!.balance as string),
+      demoBalance: parseFloat(account!.demoBalance as string),
+      currency: account!.currency,
+      autoInvestEnabled: account!.autoInvestEnabled,
+      totalProfit: parseFloat(account!.totalProfit as string),
+      totalTrades: account!.totalTrades,
+      winRate: parseFloat(account!.winRate as string),
+      realizedPnlUsd: parseFloat(account!.realizedPnlUsd as string),
+      mexcConnected: hasMexcCredentials(),
+      mexcBalanceUsdt: null,
+      mexcFreeUsdt: null,
+      mexcLockedUsdt: null,
+      mexcCryptoValueUsdt: null,
+      mexcBreakdown: null,
+      dailyLossLimit: parseFloat(account!.dailyLossLimit as string),
+      coinbaseConnected: false,
+      coinbaseBalanceUsd: null,
+    });
+  } catch (err) {
+    req.log.error(err);
+    res.status(500).json({ error: "Failed to update settings" });
   }
 });
 

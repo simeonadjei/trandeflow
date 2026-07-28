@@ -19,6 +19,8 @@ export const accountsTable = pgTable("accounts", {
   // Realized profit/loss in USDT from real KuCoin trading — separate pool from the
   // GHS `balance` field above (which tracks Paystack deposits/withdrawals only).
   realizedPnlUsd: numeric("realized_pnl_usd", { precision: 18, scale: 4 }).notNull().default("0.00"),
+  // 0 = disabled; positive value = max USDT loss allowed per calendar day (UTC)
+  dailyLossLimit: numeric("daily_loss_limit", { precision: 18, scale: 2 }).notNull().default("0.00"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

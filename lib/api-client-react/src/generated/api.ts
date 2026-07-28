@@ -32,6 +32,7 @@ import type {
   PatternAnalysis,
   Trade,
   TradeInput,
+  UpdateAccountSettingsBody,
   Withdrawal,
   WithdrawalInput
 } from './api.schemas';
@@ -201,6 +202,77 @@ export function useGetAccount<TData = Awaited<ReturnType<typeof getAccount>>, TE
 
 
 
+
+export const getUpdateAccountSettingsUrl = () => {
+
+
+
+
+  return `/api/account/settings`
+}
+
+/**
+ * @summary Update account settings (daily loss limit, trade percentage, etc.)
+ */
+export const updateAccountSettings = async (updateAccountSettingsBody: UpdateAccountSettingsBody, options?: RequestInit): Promise<Account> => {
+
+  return customFetch<Account>(getUpdateAccountSettingsUrl(),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      updateAccountSettingsBody,)
+  }
+);}
+
+
+
+
+export const getUpdateAccountSettingsMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAccountSettings>>, TError,{data: BodyType<UpdateAccountSettingsBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAccountSettings>>, TError,{data: BodyType<UpdateAccountSettingsBody>}, TContext> => {
+
+const mutationKey = ['updateAccountSettings'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAccountSettings>>, {data: BodyType<UpdateAccountSettingsBody>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateAccountSettings(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAccountSettingsMutationResult = NonNullable<Awaited<ReturnType<typeof updateAccountSettings>>>
+    export type UpdateAccountSettingsMutationBody = BodyType<UpdateAccountSettingsBody>
+    export type UpdateAccountSettingsMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Update account settings (daily loss limit, trade percentage, etc.)
+ */
+export const useUpdateAccountSettings = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAccountSettings>>, TError,{data: BodyType<UpdateAccountSettingsBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateAccountSettings>>,
+        TError,
+        {data: BodyType<UpdateAccountSettingsBody>},
+        TContext
+      > => {
+      return useMutation(getUpdateAccountSettingsMutationOptions(options));
+    }
 
 export const getGetAccountStatsUrl = () => {
 

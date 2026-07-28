@@ -52,6 +52,8 @@ export interface Account {
      * @nullable
      */
   mexcBreakdown?: MexcBalanceBreakdownItem[] | null;
+  /** Max USDT loss allowed per calendar day (UTC). 0 = disabled. */
+  dailyLossLimit?: number;
 }
 
 export interface AccountStats {
@@ -263,4 +265,9 @@ export interface WithdrawalInput {
   momoNumber: string;
   momoProvider: WithdrawalInputMomoProvider;
 }
+
+export type UpdateAccountSettingsBody = {
+  /** Max USDT loss per calendar day. 0 = disabled. */
+  dailyLossLimit?: number;
+};
 

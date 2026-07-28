@@ -43,4 +43,6 @@ export interface Account {
      * @nullable
      */
   mexcBreakdown?: MexcBalanceBreakdownItem[] | null;
+  /** Max USDT loss allowed per calendar day (UTC). 0 = disabled. */
+  dailyLossLimit?: number;
 }

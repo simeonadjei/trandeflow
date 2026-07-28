@@ -49,6 +49,29 @@ paths:
               schema:
                 $ref: "#/components/schemas/Account"
 
+  /account/settings:
+    patch:
+      operationId: updateAccountSettings
+      tags: [account]
+      summary: Update account settings (daily loss limit, trade percentage, etc.)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dailyLossLimit:
+                  type: number
+                  description: Max USDT loss per calendar day. 0 = disabled.
+      responses:
+        "200":
+          description: Updated account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Account"
+
   /account/stats:
     get:
       operationId: getAccountStats
@@ -309,6 +332,9 @@ components:
           items:
             $ref: "#/components/schemas/MexcBalanceBreakdownItem"
           description: Per-asset balance breakdown
+        dailyLossLimit:
+          type: number
+          description: Max USDT loss allowed per calendar day (UTC). 0 = disabled.
 
     AccountStats:
       type: object

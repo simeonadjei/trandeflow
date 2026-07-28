@@ -12,7 +12,7 @@
 
 import { db } from "@workspace/db";
 import { accountsTable, tradesTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, and, gte, lt, sql } from "drizzle-orm";
 import { logger } from "./logger";
 import {
   hasMexcCredentials, getFreeBalance, getKlines, getPrice,
@@ -141,6 +141,38 @@ async function loop() {
     const account      = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
     const tradePercent = Math.min(100, Math.max(1, parseFloat((account?.tradePercentage as string) ?? "50")));
     _s.tradePercent    = tradePercent;
+
+    // ── Daily loss limit check ─────────────────────────────────────────────
+    const dailyLossLimit = parseFloat((account?.dailyLossLimit as string) ?? "0");
+    if (dailyLossLimit > 0) {
+      // Sum losses from real (non-demo) closed trades today (UTC calendar day)
+      const todayStart = new Date();
+      todayStart.setUTCHours(0, 0, 0, 0);
+      const tomorrowStart = new Date(todayStart);
+      tomorrowStart.setUTCDate(tomorrowStart.getUTCDate() + 1);
+
+      const rows = await db
+        .select({ totalLoss: sql<string>`COALESCE(SUM(CASE WHEN profit < 0 THEN ABS(profit) ELSE 0 END), 0)` })
+        .from(tradesTable)
+        .where(
+          and(
+            eq(tradesTable.isDemo, false),
+            gte(tradesTable.closedAt, todayStart),
+            lt(tradesTable.closedAt, tomorrowStart),
+          ),
+        );
+
+      const todayLossUsdt = parseFloat(rows[0]?.totalLoss ?? "0");
+      if (todayLossUsdt >= dailyLossLimit) {
+        logger.warn({ todayLossUsdt, dailyLossLimit }, "CT: daily loss limit reached — stopping session");
+        await db.update(accountsTable).set({ autoInvestEnabled: false }).where(eq(accountsTable.id, 1));
+        _s.active  = false;
+        _s.phase   = "idle";
+        _s.message = `Daily loss limit reached (${todayLossUsdt.toFixed(2)} / ${dailyLossLimit.toFixed(2)} USDT). Session stopped.`;
+        _loopRunning = false;
+        return;
+      }
+    }
 
     // ── Scan ──────────────────────────────────────────────────────────────
     _s.phase   = "analyzing";

@@ -26,6 +26,7 @@ export * from './tradeDirection';
 export * from './tradeInput';
 export * from './tradeInputDirection';
 export * from './tradeStatus';
+export * from './updateAccountSettingsBody';
 export * from './withdrawal';
 export * from './withdrawalInput';
 export * from './withdrawalInputMomoProvider';

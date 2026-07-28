@@ -39,7 +39,40 @@ export const GetAccountResponse = zod.object({
   "free": zod.number(),
   "locked": zod.number(),
   "valueUsdt": zod.number()
-})).nullish().describe('Per-asset balance breakdown')
+})).nullish().describe('Per-asset balance breakdown'),
+  "dailyLossLimit": zod.number().optional().describe('Max USDT loss allowed per calendar day (UTC). 0 = disabled.')
+})
+
+
+/**
+ * @summary Update account settings (daily loss limit, trade percentage, etc.)
+ */
+export const UpdateAccountSettingsBody = zod.object({
+  "dailyLossLimit": zod.number().optional().describe('Max USDT loss per calendar day. 0 = disabled.')
+})
+
+export const UpdateAccountSettingsResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "balance": zod.number(),
+  "demoBalance": zod.number(),
+  "currency": zod.string(),
+  "autoInvestEnabled": zod.boolean(),
+  "totalProfit": zod.number().optional(),
+  "totalTrades": zod.number().optional(),
+  "winRate": zod.number().optional(),
+  "mexcConnected": zod.boolean().optional(),
+  "mexcBalanceUsdt": zod.number().nullish().describe('Total MEXC portfolio value in USDT (free + locked USDT + crypto holdings at market price)'),
+  "mexcFreeUsdt": zod.number().nullish().describe('Free (available) USDT on MEXC'),
+  "mexcLockedUsdt": zod.number().nullish().describe('Locked USDT on MEXC (in open orders)'),
+  "mexcCryptoValueUsdt": zod.number().nullish().describe('Value of crypto holdings (BTC, ETH, etc.) converted to USDT at current prices'),
+  "mexcBreakdown": zod.array(zod.object({
+  "asset": zod.string(),
+  "free": zod.number(),
+  "locked": zod.number(),
+  "valueUsdt": zod.number()
+})).nullish().describe('Per-asset balance breakdown'),
+  "dailyLossLimit": zod.number().optional().describe('Max USDT loss allowed per calendar day (UTC). 0 = disabled.')
 })
 
 
