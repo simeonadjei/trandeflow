@@ -1,3 +1,8 @@
+// Allow Render (and other hosts) to supply the DB URL as NEON_DATABASE_URL
+if (!process.env["DATABASE_URL"] && process.env["NEON_DATABASE_URL"]) {
+  process.env["DATABASE_URL"] = process.env["NEON_DATABASE_URL"];
+}
+
 import app from "./app";
 import { logger } from "./lib/logger";
 import { initContinuousTrader } from "./lib/continuousTrader";
