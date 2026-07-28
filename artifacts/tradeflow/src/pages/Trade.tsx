@@ -195,8 +195,8 @@ export default function Trade() {
   const { data: assets } = useListAssets();
   const { data: candles } = useGetCandles(selectedSymbol, { query: { enabled: !!selectedSymbol, queryKey: getGetCandlesQueryKey(selectedSymbol) } });
   const { data: pattern } = useAnalyzePattern(selectedSymbol, { query: { enabled: !!selectedSymbol, refetchInterval: 15000, queryKey: getAnalyzePatternQueryKey(selectedSymbol) } });
-  const { data: trades, refetch: refetchTrades } = useListTrades({ query: { refetchInterval: 3000, queryKey: getListTradesQueryKey() } });
-  const { data: account } = useGetAccount({ query: { refetchInterval: 3000, queryKey: getGetAccountQueryKey() } });
+  const { data: trades, refetch: refetchTrades } = useListTrades({ query: { refetchInterval: 1000, queryKey: getListTradesQueryKey() } });
+  const { data: account } = useGetAccount({ query: { refetchInterval: 1000, queryKey: getGetAccountQueryKey() } });
   const updateSettings = useUpdateAccountSettings();
 
   // Sync loss limit input from server once on load
@@ -212,10 +212,6 @@ export default function Trade() {
     : (account?.balance ?? 0);
 
   const handleStartSession = async () => {
-    // Guard: must have at least 1 USDT free on MEXC before bot can run
-    if (!isDemo && !realBalanceSufficient) {
-      return; // button is disabled anyway, but belt-and-suspenders
-    }
     setSessionLoading(true);
     try {
       const res = await fetch(`${apiBase}/api/session/start`, {
@@ -254,11 +250,11 @@ export default function Trade() {
   });
 
   const selectedAsset = assets?.find((a) => a.symbol === selectedSymbol);
-  // In real mode with MEXC connected, show free USDT as the display balance
+  // Real mode always uses MEXC USDT spot balance — no GHS fallback
+  const displayCurrency = isDemo ? "GHS" : "USDT";
   const displayBalance = isDemo
     ? (account?.demoBalance ?? 0)
-    : realEffectiveBalance;
-  const displayCurrency = isDemo ? "GHS" : (account?.mexcConnected ? "USDT" : "GHS");
+    : (account?.mexcFreeUsdt ?? 0);
 
   // Stake is always derived from the % slider — minimum 1 unit
   const amount = Math.max(1, parseFloat(((displayBalance * tradePercent) / 100).toFixed(2)));

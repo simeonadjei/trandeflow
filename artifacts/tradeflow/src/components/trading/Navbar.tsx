@@ -1,12 +1,12 @@
 import { Link, useLocation } from "wouter";
 import { TrendingUp, BarChart2, Wallet, BookOpen, Menu, X } from "lucide-react";
 import { useState } from "react";
-import { useGetAccount } from "@workspace/api-client-react";
+import { useGetAccount, getGetAccountQueryKey } from "@workspace/api-client-react";
 
 export default function Navbar() {
   const [location] = useLocation();
   const [open, setOpen] = useState(false);
-  const { data: account } = useGetAccount();
+  const { data: account } = useGetAccount({ query: { refetchInterval: 1000, queryKey: getGetAccountQueryKey() } });
 
   const links = [
     { href: "/trade", label: "Trade", icon: BarChart2 },
@@ -43,10 +43,7 @@ export default function Navbar() {
           {account && (
             <div className="flex items-center gap-2 text-sm">
               <span className="text-muted-foreground">Balance:</span>
-              {account.mexcConnected
-                ? <span className="font-bold text-primary">{(account.mexcFreeUsdt ?? 0).toFixed(4)} USDT</span>
-                : <span className="font-bold text-primary">GHS {account.balance.toFixed(2)}</span>
-              }
+              <span className="font-bold text-primary">{(account.mexcFreeUsdt ?? 0).toFixed(4)} USDT</span>
             </div>
           )}
           <Link href="/trade" className="px-4 py-1.5 bg-primary text-primary-foreground text-sm font-semibold rounded-md hover:opacity-90 transition-opacity">
@@ -77,10 +74,7 @@ export default function Navbar() {
           {account && (
             <div className="pt-2 border-t border-border mt-2 text-sm">
               <span className="text-muted-foreground">Balance: </span>
-              {account.mexcConnected
-                ? <span className="font-bold text-primary">{(account.mexcFreeUsdt ?? 0).toFixed(4)} USDT</span>
-                : <span className="font-bold text-primary">GHS {account.balance.toFixed(2)}</span>
-              }
+              <span className="font-bold text-primary">{(account.mexcFreeUsdt ?? 0).toFixed(4)} USDT</span>
             </div>
           )}
         </div>
