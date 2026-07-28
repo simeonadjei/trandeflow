@@ -29,7 +29,7 @@ const STOP_LOSS_PCT     = 0.004;   // -0.4%
 const PRE_TRADE_SECS    = 5;       // countdown before order fires (for UI)
 const MIN_SCORE         = 5;       // out of 8 indicators
 const MIN_LEAD          = 2;       // winner must lead by this many points
-const MIN_STAKE_USDT    = 1;
+const MIN_STAKE_USDT    = 5;   // MEXC minimum notional per order
 
 // ─── Session status ───────────────────────────────────────────────────────────
 export interface SessionStatus {
@@ -392,19 +392,26 @@ async function loop() {
       buy = await marketBuy(asset, stake);
       logger.info({ orderId: buy.orderId, avgPrice: buy.avgPrice, baseQty: buy.baseQty, quoteQty: buy.quoteQty }, "CT: BUY filled");
     } catch (e) {
-      logger.error({ err: (e as Error).message }, "CT: MEXC marketBuy failed");
-      _s.phase = "error"; _s.message = `Buy failed: ${(e as Error).message}`;
-      await sleep(10_000);
-      continue;
+      const errMsg = (e as Error).message;
+      logger.error({ err: errMsg }, "CT: MEXC marketBuy failed — stopping session");
+      _s.phase   = "error";
+      _s.message = `Buy failed — session stopped. Error: ${errMsg}. Restart the bot to try again.`;
+      // Stop the session so the error stays visible and the user must restart manually
+      await db.update(accountsTable).set({ autoInvestEnabled: false }).where(eq(accountsTable.id, 1));
+      _s.active  = false;
+      _loopRunning = false;
+      return;
     }
 
     // Guard: MEXC returned zero fill — order was accepted but not executed
     if (!buy.baseQty || buy.baseQty <= 0) {
       logger.error({ buy }, "CT: BUY order returned zero baseQty — order not filled");
       _s.phase   = "error";
-      _s.message = `Buy not filled (baseQty=0) — check MEXC account permissions and minimum order size`;
-      await sleep(10_000);
-      continue;
+      _s.message = `Buy not filled (qty=0) — session stopped. Check MEXC permissions and minimum order size (≥ ${MIN_STAKE_USDT} USDT). Restart to retry.`;
+      await db.update(accountsTable).set({ autoInvestEnabled: false }).where(eq(accountsTable.id, 1));
+      _s.active  = false;
+      _loopRunning = false;
+      return;
     }
 
     const entryPrice      = buy.avgPrice;

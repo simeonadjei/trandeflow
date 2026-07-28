@@ -218,6 +218,9 @@ export async function marketBuy(symbol: string, quoteQty: number): Promise<Order
     quoteOrderQty:    quoteQty.toFixed(2),
   });
 
+  // Log the full raw response so we can diagnose unexpected shapes
+  logger.info({ rawOrderResponse: data }, "MEXC: raw order response");
+
   // MEXC returns fills immediately for market orders
   const filled = parseFloat(data.executedQty   ?? "0");
   const spent  = parseFloat(data.cummulativeQuoteQty ?? "0");
