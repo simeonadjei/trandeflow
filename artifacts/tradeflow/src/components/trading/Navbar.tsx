@@ -43,7 +43,10 @@ export default function Navbar() {
           {account && (
             <div className="flex items-center gap-2 text-sm">
               <span className="text-muted-foreground">Balance:</span>
-              <span className="font-bold text-primary">GHS {account.balance.toFixed(2)}</span>
+              {account.mexcConnected
+                ? <span className="font-bold text-primary">{(account.mexcFreeUsdt ?? 0).toFixed(4)} USDT</span>
+                : <span className="font-bold text-primary">GHS {account.balance.toFixed(2)}</span>
+              }
             </div>
           )}
           <Link href="/trade" className="px-4 py-1.5 bg-primary text-primary-foreground text-sm font-semibold rounded-md hover:opacity-90 transition-opacity">
@@ -74,7 +77,10 @@ export default function Navbar() {
           {account && (
             <div className="pt-2 border-t border-border mt-2 text-sm">
               <span className="text-muted-foreground">Balance: </span>
-              <span className="font-bold text-primary">GHS {account.balance.toFixed(2)}</span>
+              {account.mexcConnected
+                ? <span className="font-bold text-primary">{(account.mexcFreeUsdt ?? 0).toFixed(4)} USDT</span>
+                : <span className="font-bold text-primary">GHS {account.balance.toFixed(2)}</span>
+              }
             </div>
           )}
         </div>

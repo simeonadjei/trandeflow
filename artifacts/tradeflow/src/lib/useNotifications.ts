@@ -33,13 +33,13 @@ export function useNotifications() {
 
     if (event.type === "placed") {
       title = `🤖 Bot placed ${event.direction} trade`;
-      body = `${event.symbol} — GHS ${event.amount.toFixed(2)} at risk`;
+      body = `${event.symbol} — USDT ${event.amount.toFixed(4)} at risk`;
     } else if (event.type === "win") {
       title = `✅ Auto-trade WON!`;
-      body = `${event.symbol} — +GHS ${event.profit.toFixed(2)} added to your balance`;
+      body = `${event.symbol} — +USDT ${event.profit.toFixed(4)} added to your spot balance`;
     } else {
       title = `❌ Auto-trade lost`;
-      body = `${event.symbol} — GHS ${event.amount.toFixed(2)} lost`;
+      body = `${event.symbol} — USDT ${event.amount.toFixed(4)} lost`;
     }
 
     try {

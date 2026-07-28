@@ -166,6 +166,9 @@ export default function Trade() {
           } else {
             notify({ type: "loss", symbol: sym, amount: profitAmt });
           }
+          // Refresh account balance immediately so MEXC USDT balance updates
+          queryClient.invalidateQueries({ queryKey: getGetAccountQueryKey() });
+          queryClient.invalidateQueries({ queryKey: getListTradesQueryKey() });
         }
         prevSessionRef.current = data;
         setSession(data);
@@ -322,7 +325,7 @@ export default function Trade() {
             <div className="text-[10px] leading-none flex items-center justify-end gap-1">
               {!isDemo && session?.active && (
                 <span className={session.sessionProfit >= 0 ? "text-profit font-semibold" : "text-loss font-semibold"}>
-                  {session.sessionProfit >= 0 ? "+" : ""}GHS {(session.sessionProfit ?? 0).toFixed(2)}
+                  {session.sessionProfit >= 0 ? "+" : ""}USDT {(session.sessionProfit ?? 0).toFixed(4)}
                 </span>
               )}
               <span className="text-muted-foreground">{isDemo ? "Demo" : "Real"}</span>
@@ -361,8 +364,12 @@ export default function Trade() {
             {adminStats ? (
               <>
                 <div className="flex items-center gap-1.5 shrink-0">
-                  <span className="text-[10px] text-muted-foreground">Balance</span>
-                  <span className="text-xs font-bold text-primary">GHS {(account?.balance ?? 0).toFixed(2)}</span>
+                  <span className="text-[10px] text-muted-foreground">Spot Balance</span>
+                  <span className="text-xs font-bold text-primary">
+                    {account?.mexcConnected
+                      ? `${(account.mexcFreeUsdt ?? 0).toFixed(4)} USDT`
+                      : `GHS ${(account?.balance ?? 0).toFixed(2)}`}
+                  </span>
                 </div>
                 <div className="w-px h-4 bg-border shrink-0" />
                 <div className="flex items-center gap-1.5 shrink-0">
@@ -555,9 +562,13 @@ export default function Trade() {
                   </div>
                   <div className="text-right">
                     <div className={`font-bold ${t.profit != null && t.profit >= 0 ? "text-profit" : "text-loss"}`}>
-                      {t.profit != null ? `${t.profit >= 0 ? "+" : ""}GHS ${t.profit.toFixed(2)}` : "—"}
+                      {t.profit != null
+                        ? `${t.profit >= 0 ? "+" : ""}${t.isAuto ? "USDT" : (isDemo ? "GHS" : displayCurrency)} ${t.profit.toFixed(t.isAuto ? 4 : 2)}`
+                        : "—"}
                     </div>
-                    <div className="text-xs text-muted-foreground">GHS {t.amount.toFixed(2)}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {t.isAuto ? "USDT" : (isDemo ? "GHS" : displayCurrency)} {t.amount.toFixed(t.isAuto ? 4 : 2)}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -835,7 +846,7 @@ export default function Trade() {
                     <div className="bg-background rounded-lg p-1.5 text-center">
                       <div className="text-[10px] text-muted-foreground">Profit</div>
                       <div className={`font-bold text-xs ${session.sessionProfit >= 0 ? "text-profit" : "text-loss"}`}>
-                        {session.sessionProfit >= 0 ? "+" : ""}GHS {session.sessionProfit.toFixed(2)}
+                        {session.sessionProfit >= 0 ? "+" : ""}USDT {session.sessionProfit.toFixed(4)}
                       </div>
                     </div>
                   </div>
@@ -952,7 +963,7 @@ export default function Trade() {
                     <TradeTimer closedAt={t.closedAt ?? null} duration={t.duration} createdAt={t.createdAt} />
                   </div>
                   <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>GHS {t.amount.toFixed(2)}</span>
+                    <span>USDT {t.amount.toFixed(4)}</span>
                     <span>Entry: {t.entryPrice.toFixed(t.entryPrice > 100 ? 2 : 5)}</span>
                   </div>
                 </div>
