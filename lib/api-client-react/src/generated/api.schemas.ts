@@ -264,10 +264,24 @@ export interface GoldenWindow {
   asset: string;
   /** Best UTC hour (0–23) */
   goldenHour: number;
-  /** Historical win rate at the golden hour (0–100) */
+  /**
+     * Day of week (0=Sun…6=Sat) of the best slot, or null for hour-only
+     * @nullable
+     */
+  goldenWeekday?: number | null;
+  /**
+     * Human-readable weekday label e.g. "Tuesday"
+     * @nullable
+     */
+  goldenWeekdayLabel?: string | null;
+  /** Historical win rate at the golden slot (0–100) */
   winRate: number;
+  /** Number of historical candles in the best slot */
+  bestSlotSamples?: number;
   totalCandlesAnalyzed: number;
   distribution: HourStat[];
+  /** True if the best slot meets the ≥65% win rate floor */
+  aboveFloor: boolean;
   /** Unix ms timestamp */
   computedAt: number;
 }

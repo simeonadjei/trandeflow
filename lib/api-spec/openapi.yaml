@@ -580,22 +580,34 @@ components:
 
     GoldenWindow:
       type: object
-      required: [asset, goldenHour, winRate, totalCandlesAnalyzed, distribution, computedAt]
+      required: [asset, goldenHour, winRate, totalCandlesAnalyzed, distribution, computedAt, aboveFloor]
       properties:
         asset:
           type: string
         goldenHour:
           type: integer
           description: Best UTC hour (0–23)
+        goldenWeekday:
+          type: ["integer", "null"]
+          description: Day of week (0=Sun…6=Sat) of the best slot, or null for hour-only
+        goldenWeekdayLabel:
+          type: ["string", "null"]
+          description: Human-readable weekday label e.g. "Tuesday"
         winRate:
           type: number
-          description: Historical win rate at the golden hour (0–100)
+          description: Historical win rate at the golden slot (0–100)
+        bestSlotSamples:
+          type: integer
+          description: Number of historical candles in the best slot
         totalCandlesAnalyzed:
           type: integer
         distribution:
           type: array
           items:
             $ref: "#/components/schemas/HourStat"
+        aboveFloor:
+          type: boolean
+          description: True if the best slot meets the ≥65% win rate floor
         computedAt:
           type: integer
           description: Unix ms timestamp

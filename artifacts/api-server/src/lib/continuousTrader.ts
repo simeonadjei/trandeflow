@@ -23,6 +23,7 @@ import {
 } from "./mexcClient";
 import {
   getGoldenWindow, isInGoldenWindow, minsToGoldenWindow,
+  type GoldenWindowResult,
 } from "./goldenWindow";
 
 // ─── Tunables ────────────────────────────────────────────────────────────────
@@ -33,8 +34,9 @@ const CHECK_INTERVAL_MS = 5_000;   // check TP/SL every 5s while holding
 const TAKE_PROFIT_PCT   = 0.008;   // +0.8%
 const STOP_LOSS_PCT     = 0.004;   // -0.4%
 const PRE_TRADE_SECS    = 5;       // countdown before order fires
-const MIN_SUPER_SCORE   = 10;      // out of 12 super indicators
+const MIN_SUPER_SCORE   = 11;      // out of 12 — raised from 10 to 11 for stricter filter
 const MIN_STAKE_USDT    = 5;       // MEXC minimum notional
+const WIN_RATE_FLOOR    = 65;      // skip all trading if golden window win rate < 65%
 
 // ─── Session status ───────────────────────────────────────────────────────────
 export interface SessionStatus {
@@ -65,22 +67,30 @@ export interface SessionStatus {
   /** Last 30 bot events */
   recentEvents:       string[];
   // ── Golden window fields ──────────────────────────────────────────────────
-  /** Best UTC hour (0–23) determined by 30-day analysis */
-  goldenHour:         number | null;
-  /** Historical win rate at the golden hour (0–100) */
-  goldenWinRate:      number | null;
-  /** Whether right now is within ±30 min of the golden hour */
-  inGoldenWindow:     boolean;
+  /** Best UTC hour (0–23) determined by 90-day analysis */
+  goldenHour:           number | null;
+  /** Day of week (0=Sun…6=Sat) or null for hour-only mode */
+  goldenWeekday:        number | null;
+  /** Human-readable weekday label e.g. "Tuesday" */
+  goldenWeekdayLabel:   string | null;
+  /** Historical win rate at the golden slot (0–100) */
+  goldenWinRate:        number | null;
+  /** True if the golden window meets the ≥65% floor */
+  aboveFloor:           boolean;
+  /** Whether right now is within ±30 min of the golden hour (and matching weekday) */
+  inGoldenWindow:       boolean;
   /** Minutes until golden window opens (0 when inside) */
-  minsToGoldenWindow: number;
+  minsToGoldenWindow:   number;
   /** Already placed one trade for today (UTC date) */
-  todayTraded:        boolean;
+  todayTraded:          boolean;
   /** How many of the 12 super indicators currently score UP */
-  superScore:         number;
+  superScore:           number;
   /** Total super indicators evaluated (12 when inside golden window) */
-  superTotal:         number;
+  superTotal:           number;
   /** Individual indicator results */
-  indicators:         Array<{ name: string; result: "UP" | "DOWN" | "NEUTRAL" }>;
+  indicators:           Array<{ name: string; result: "UP" | "DOWN" | "NEUTRAL" }>;
+  /** Whether both BTC AND ETH confirmed the signal (required for a trade) */
+  bothAssetsConfirmed:  boolean;
 }
 
 // ─── In-memory event log ──────────────────────────────────────────────────────
@@ -92,7 +102,7 @@ function logEvent(msg: string) {
   const line = `[${ts}] ${msg}`;
   _events.push(line);
   if (_events.length > MAX_EVENTS) _events.shift();
-  logger.info(msg, "CT:event");
+  logger.info(msg);
 }
 
 let _s: SessionStatus = {
@@ -104,11 +114,13 @@ let _s: SessionStatus = {
   message: "Ready",
   tradeStartedAt: null, tradeWindowMs: TRADE_WINDOW_MS,
   recentEvents: [],
-  goldenHour: null, goldenWinRate: null,
+  goldenHour: null, goldenWeekday: null, goldenWeekdayLabel: null,
+  goldenWinRate: null, aboveFloor: false,
   inGoldenWindow: false, minsToGoldenWindow: 0,
   todayTraded: false,
   superScore: 0, superTotal: 0,
   indicators: [],
+  bothAssetsConfirmed: false,
 };
 
 let _sessionStartBalanceUsdt: number | null = null;
@@ -296,9 +308,15 @@ async function loop() {
 
   const gw = await getGoldenWindow();
   if (gw) {
-    _s.goldenHour     = gw.goldenHour;
-    _s.goldenWinRate  = gw.winRate;
-    logEvent(`Golden window: ${gw.goldenHour}:00 UTC — ${gw.winRate}% historical win rate (${gw.totalCandlesAnalyzed} candles)`);
+    _s.goldenHour         = gw.goldenHour;
+    _s.goldenWeekday      = gw.goldenWeekday;
+    _s.goldenWeekdayLabel = gw.goldenWeekdayLabel;
+    _s.goldenWinRate      = gw.winRate;
+    _s.aboveFloor         = gw.aboveFloor;
+    const slotLabel = gw.goldenWeekdayLabel
+      ? `${gw.goldenWeekdayLabel}s at ${String(gw.goldenHour).padStart(2, "0")}:00 UTC`
+      : `${String(gw.goldenHour).padStart(2, "0")}:00 UTC (any day)`;
+    logEvent(`Golden window: ${slotLabel} — ${gw.winRate}% win rate (${gw.bestSlotSamples} samples / ${gw.totalCandlesAnalyzed} candles total)${gw.aboveFloor ? "" : " — BELOW 65% FLOOR, will not trade"}`);
   } else {
     logEvent("WARN: could not compute golden window — running in standard mode");
   }
@@ -344,15 +362,18 @@ async function loop() {
     if (gw && Date.now() - gw.computedAt > 6 * 60 * 60 * 1000) {
       const fresh = await getGoldenWindow(true);
       if (fresh) {
-        _s.goldenHour    = fresh.goldenHour;
-        _s.goldenWinRate = fresh.winRate;
-        logEvent(`Golden window refreshed: ${fresh.goldenHour}:00 UTC — ${fresh.winRate}%`);
+        _s.goldenHour         = fresh.goldenHour;
+        _s.goldenWeekday      = fresh.goldenWeekday;
+        _s.goldenWeekdayLabel = fresh.goldenWeekdayLabel;
+        _s.goldenWinRate      = fresh.winRate;
+        _s.aboveFloor         = fresh.aboveFloor;
+        logEvent(`Golden window refreshed: ${fresh.goldenWeekdayLabel ? fresh.goldenWeekdayLabel + "s at " : ""}${String(fresh.goldenHour).padStart(2, "0")}:00 UTC — ${fresh.winRate}%`);
       }
     }
 
     // ── Update golden window status ────────────────────────────────────────
-    const inWindow = isInGoldenWindow(_s.goldenHour);
-    const minsAway = minsToGoldenWindow(_s.goldenHour);
+    const inWindow = isInGoldenWindow(_s.goldenHour, _s.goldenWeekday);
+    const minsAway = minsToGoldenWindow(_s.goldenHour, _s.goldenWeekday);
     _s.inGoldenWindow     = inWindow;
     _s.minsToGoldenWindow = minsAway;
 
@@ -375,12 +396,19 @@ async function loop() {
 
     // ── Outside golden window — scan and wait ─────────────────────────────
     if (!inWindow) {
-      const hourLabel = _s.goldenHour !== null
-        ? `${String(_s.goldenHour).padStart(2, "0")}:00 UTC`
+      const slotLabel = _s.goldenHour !== null
+        ? (_s.goldenWeekdayLabel
+            ? `${_s.goldenWeekdayLabel}s ${String(_s.goldenHour).padStart(2, "0")}:00 UTC`
+            : `${String(_s.goldenHour).padStart(2, "0")}:00 UTC`)
         : "unknown";
+
+      const floorNote = _s.goldenHour !== null && !_s.aboveFloor
+        ? " ⚠ win rate below 65% floor — no trade"
+        : "";
+
       _s.phase   = "golden-wait";
       _s.message = _s.goldenHour !== null
-        ? `Waiting for golden window (${hourLabel}, ${_s.goldenWinRate?.toFixed(1)}% win rate) — opens in ${minsAway} min`
+        ? `Waiting for golden window (${slotLabel}, ${_s.goldenWinRate?.toFixed(1)}% win rate${floorNote}) — opens in ${minsAway} min`
         : "Golden window not yet computed";
 
       // Run a quick indicator scan for live UI feedback (no trade)
@@ -399,10 +427,19 @@ async function loop() {
 
       _s.phase = "golden-wait";
       _s.message = _s.goldenHour !== null
-        ? `Waiting for golden window (${String(_s.goldenHour).padStart(2, "0")}:00 UTC, ${_s.goldenWinRate?.toFixed(1)}% win rate) — opens in ${minsAway} min`
+        ? `Waiting for golden window (${slotLabel}, ${_s.goldenWinRate?.toFixed(1)}% win rate${floorNote}) — opens in ${minsAway} min`
         : "Golden window not yet computed — analyzing";
       logEvent(`Outside golden window — next opens in ${minsAway} min`);
       await sleep(IDLE_SCAN_MS);
+      continue;
+    }
+
+    // ── Win rate floor check — skip if golden window is weak ───────────────
+    if (!_s.aboveFloor) {
+      _s.phase   = "golden-wait";
+      _s.message = `Golden window win rate ${_s.goldenWinRate?.toFixed(1)}% is below the 65% floor — skipping today's trade`;
+      logEvent(`WARN: golden window ${_s.goldenWinRate?.toFixed(1)}% < 65% floor — no trade this window`);
+      await sleep(60_000);
       continue;
     }
 
@@ -413,42 +450,56 @@ async function loop() {
     _s.phase   = "analyzing";
     _s.message = "Golden window active — running 12-indicator super suite…";
 
-    const ASSETS = ["BTCUSDT", "ETHUSDT"];
-    let bestSignal: { asset: string; pred: SuperPrediction } | null = null;
+    // ── Scan BOTH BTC and ETH — BOTH must score ≥11/12 to trade ─────────────
+    let predBTC: SuperPrediction | null = null;
+    let predETH: SuperPrediction | null = null;
 
-    for (const asset of ASSETS) {
-      let pred: SuperPrediction;
-      try {
-        pred = await superPredict(asset);
-      } catch (e) {
-        logEvent(`ERROR scanning ${asset}: ${(e as Error).message}`);
-        continue;
-      }
-
-      logEvent(`${asset}: UP ${pred.upScore}/12 indicators, conf ${pred.confidence}%`);
-      _s.asset       = asset;
-      _s.upScore     = pred.upScore;
-      _s.downScore   = pred.downScore;
-      _s.superScore  = pred.upScore;
-      _s.superTotal  = 12;
-      _s.indicators  = pred.indicators;
-      _s.winConfidence = pred.confidence;
-      _s.direction   = pred.direction;
-
-      if (pred.direction === "UP" && (!bestSignal || pred.upScore > bestSignal.pred.upScore)) {
-        bestSignal = { asset, pred };
-      }
+    try { predBTC = await superPredict("BTCUSDT"); } catch (e) {
+      logEvent(`ERROR scanning BTCUSDT: ${(e as Error).message}`);
+    }
+    try { predETH = await superPredict("ETHUSDT"); } catch (e) {
+      logEvent(`ERROR scanning ETHUSDT: ${(e as Error).message}`);
     }
 
-    if (!bestSignal) {
+    if (predBTC) logEvent(`BTCUSDT: UP ${predBTC.upScore}/12, conf ${predBTC.confidence}%`);
+    if (predETH) logEvent(`ETHUSDT: UP ${predETH.upScore}/12, conf ${predETH.confidence}%`);
+
+    // Show whichever asset has the higher score in the UI
+    const displayPred = predBTC && predETH
+      ? (predBTC.upScore >= predETH.upScore ? predBTC : predETH)
+      : (predBTC ?? predETH);
+
+    if (displayPred) {
+      _s.asset         = predBTC && predBTC.upScore >= (predETH?.upScore ?? 0) ? "BTCUSDT" : "ETHUSDT";
+      _s.upScore       = displayPred.upScore;
+      _s.downScore     = displayPred.downScore;
+      _s.superScore    = displayPred.upScore;
+      _s.superTotal    = 12;
+      _s.indicators    = displayPred.indicators;
+      _s.winConfidence = displayPred.confidence;
+      _s.direction     = displayPred.direction;
+    }
+
+    // Require BOTH BTC and ETH to confirm ≥11/12
+    const btcConfirmed = predBTC !== null && predBTC.upScore >= MIN_SUPER_SCORE;
+    const ethConfirmed = predETH !== null && predETH.upScore >= MIN_SUPER_SCORE;
+    const bothConfirmed = btcConfirmed && ethConfirmed;
+    _s.bothAssetsConfirmed = bothConfirmed;
+
+    if (!bothConfirmed) {
+      const btcStr = predBTC ? `BTC ${predBTC.upScore}/12` : "BTC failed";
+      const ethStr = predETH ? `ETH ${predETH.upScore}/12` : "ETH failed";
       _s.phase   = "golden-wait";
-      _s.message = `Inside golden window but score too low (need ${MIN_SUPER_SCORE}/12) — retrying in 10s`;
-      logEvent(`Golden window: indicators < ${MIN_SUPER_SCORE}/12 — no trade this cycle`);
+      _s.message = `Both assets need ≥${MIN_SUPER_SCORE}/12 — ${btcStr}, ${ethStr} — retrying in 10s`;
+      logEvent(`Dual-asset check: ${btcStr}, ${ethStr} — need both ≥${MIN_SUPER_SCORE}/12`);
       await sleep(WINDOW_SCAN_MS);
       continue;
     }
 
-    const { asset, pred: bestPred } = bestSignal;
+    // Pick the asset with the higher score to trade
+    const asset = (predBTC!.upScore >= predETH!.upScore) ? "BTCUSDT" : "ETHUSDT";
+    const bestPred = asset === "BTCUSDT" ? predBTC! : predETH!;
+    logEvent(`DUAL CONFIRMED: BTC ${predBTC!.upScore}/12 + ETH ${predETH!.upScore}/12 — trading ${asset}`);
     logEvent(`SUPER SIGNAL: ${asset} UP ${bestPred.upScore}/12 (${bestPred.confidence}% confidence) — TRADING!`);
 
     // ── Pre-trade countdown ───────────────────────────────────────────────

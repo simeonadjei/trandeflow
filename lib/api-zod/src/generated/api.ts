@@ -129,7 +129,10 @@ export const GetCandlesResponse = zod.array(GetCandlesResponseItem)
 export const GetGoldenWindowResponse = zod.object({
   "asset": zod.string(),
   "goldenHour": zod.number().describe('Best UTC hour (0–23)'),
-  "winRate": zod.number().describe('Historical win rate at the golden hour (0–100)'),
+  "goldenWeekday": zod.number().nullish().describe('Day of week (0=Sun…6=Sat) of the best slot, or null for hour-only'),
+  "goldenWeekdayLabel": zod.string().nullish().describe('Human-readable weekday label e.g. \"Tuesday\"'),
+  "winRate": zod.number().describe('Historical win rate at the golden slot (0–100)'),
+  "bestSlotSamples": zod.number().optional().describe('Number of historical candles in the best slot'),
   "totalCandlesAnalyzed": zod.number(),
   "distribution": zod.array(zod.object({
   "hour": zod.number().describe('UTC hour (0–23)'),
@@ -137,6 +140,7 @@ export const GetGoldenWindowResponse = zod.object({
   "total": zod.number(),
   "winRate": zod.number().describe('0–100')
 })),
+  "aboveFloor": zod.boolean().describe('True if the best slot meets the ≥65% win rate floor'),
   "computedAt": zod.number().describe('Unix ms timestamp')
 })
 

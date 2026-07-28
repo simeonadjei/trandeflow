@@ -98,9 +98,16 @@ export interface Candle {
  * @param interval MEXC interval string: "1m" | "5m" | "15m" | "1h" etc. (default "1m")
  * Returns oldest → newest.
  */
-export async function getKlines(symbol: string, count = 30, interval = "1m"): Promise<Candle[]> {
-  const url = `${BASE}/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${count}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+export async function getKlines(
+  symbol: string,
+  count = 30,
+  interval = "1m",
+  options?: { startTime?: number; endTime?: number },
+): Promise<Candle[]> {
+  let url = `${BASE}/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${count}`;
+  if (options?.startTime) url += `&startTime=${options.startTime}`;
+  if (options?.endTime)   url += `&endTime=${options.endTime}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(12_000) });
   const json = await res.json() as any;
   if (!res.ok) throw new Error(`MEXC klines error ${res.status}: ${JSON.stringify(json)}`);
   // Each row: [openTime, open, high, low, close, volume, closeTime, ...]
