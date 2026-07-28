@@ -1,0 +1,64 @@
+Connected to GitHub so push
+
+Pushed — 6a918ae → main: fix: realistic trading params — 5min window, 0.8% TP, 0.4% SL, RSI 40-65, strict higher lows
+
+Render is redeploying now. Give it 2–3 minutes, then start a new session on the Trade page. The bot will be noticeably more selective about entries and give each trade enough time to actually reach the profit target.
+
+The 5min that it's trading, put timer on it so I will how many mins left to profit or loss, explain, does that 5 minutes means that it hold trade till the 5min exhausts,
+
+Good question — let me explain first, then add the timer.
+
+How the 5-minute window actually works: The bot does NOT hold for the full 5 minutes every time. It exits the moment any of these happen first:
+
+✅ Price hits +0.8% → Take-profit, sells immediately
+❌ Price hits -0.4% → Stop-loss, sells immediately
+📉 Signal drops below 6/8 → Signal reversed, sells immediately
+⏱️ 5 minutes pass with none of the above → "Window expired", sells anyway
+The 5 minutes is just the safety net — the maximum it will ever hold. Most trades will exit before that.
+
+Now I'll add a live countdown timer that appears during an active trade.
+
+Let me find the bot session panel in Trade.tsx to know exactly where to insert the timer:
+
+Now I have the full picture. The frontend already has a countdown section wired to session.countdown but the backend never sends it. I'll add tradeStartedAt to the backend status, compute the live countdown in the frontend, and make the timer UI look clear and useful.
+
+The _s initializer now references TRADE_WINDOW_MS before it's declared. Let me fix the ordering and then wire up the set/clear calls, plus update the frontend — all in parallel.
+
+I'll fix the TRADE_WINDOW_MS ordering, wire up tradeStartedAt set/clear in the loop, and build the frontend timer — all at once.
+
+Now I have everything. Making all three changes in parallel — move tunables up in the backend (fixes forward reference), wire tradeStartedAt set/clear in the trading loop, and build the frontend countdown timer.
+
+Now I'll remove the duplicate tunables block lower in the file, wire tradeStartedAt set/clear, and update the frontend — all in parallel.
+
+Now wire tradeStartedAt in the loop and update the frontend — both in parallel.
+
+Still need to clear tradeStartedAt after the trade closes, and update the frontend timer. Doing both in parallel.
+
+Now the frontend — replace the broken session.countdown reference with a proper live countdown timer:
+
+Now add the countdown useEffect and replace the UI section — both in parallel:
+
+Now replace the broken countdown UI section in Trade.tsx with the proper timer display:
+
+The frontend hot-reloaded. Now restart the API server to pick up the backend changes, then commit and push.
+
+Both commits are pushed — 3a4e741 → main. Render is redeploying now.
+
+Here's what the timer looks like when the bot is in an active trade:
+
+mm:ss countdown in the top-right of the signal panel (e.g. 4:47 left)
+Progress bar that drains as time runs out — yellow when plenty of time remains, orange under 2 minutes, red under 30 seconds
+TP / SL labels below the bar (TP +0.8% on the left, SL −0.4% on the right) so you always know the exit targets at a glance
+The timer disappears the moment the trade closes (win, loss, or window expired)
+To be clear on how the 5 minutes works: the bot will exit early the moment price hits +0.8% (take-profit) or −0.4% (stop-loss) — the countdown is just the safety net in case neither target is reached. Most trades should close well before it runs out.
+
+What conditions does not look for before making trade
+
+You've reached your monthly free quota limit. It will reset on August 4, 2026.
+
+TradeFlow
+Website
+
+
+
+Open TradeFlow
