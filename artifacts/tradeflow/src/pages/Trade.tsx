@@ -778,9 +778,9 @@ export default function Trade() {
                 <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-3 flex items-start gap-2">
                   <span className="text-yellow-400 text-sm mt-0.5">⚠</span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-semibold text-yellow-400">Low MEXC Balance</p>
+                    <p className="text-xs font-semibold text-yellow-400">Low Spot Balance</p>
                     <p className="text-[11px] text-muted-foreground">
-                      Need ≥ {MIN_TRADE_BALANCE_USDT} USDT free on MEXC to run the bot.
+                      Need ≥ {MIN_TRADE_BALANCE_USDT} USDT in your MEXC Spot wallet to trade.
                       Current: <span className="font-bold text-foreground">{realEffectiveBalance.toFixed(4)} USDT</span>
                     </p>
                     <a
@@ -821,20 +821,20 @@ export default function Trade() {
             </div>
           </div>
 
-          {/* MEXC Portfolio Balance */}
+          {/* Spot Balance */}
           {!isDemo && account?.mexcConnected && (
             <div className="px-4 pb-4">
               <div className="bg-card border border-primary/20 rounded-xl p-3">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider">
                     <Wallet className="w-3.5 h-3.5 text-primary" />
-                    MEXC Account
+                    Spot Balance
                   </div>
                   <div className="text-right">
                     <div className="text-sm font-black text-primary">
-                      {(account.mexcBalanceUsdt ?? 0).toFixed(4)} USDT
+                      {(account.mexcFreeUsdt ?? 0).toFixed(4)} USDT
                     </div>
-                    <div className="text-[10px] text-muted-foreground">Total portfolio</div>
+                    <div className="text-[10px] text-muted-foreground">Free to trade</div>
                   </div>
                 </div>
                 {/* Breakdown */}
