@@ -237,8 +237,16 @@ const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 let _loopRunning = false;
 
 async function isEnabled(): Promise<boolean> {
-  const account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
-  return Boolean(account?.autoInvestEnabled);
+  try {
+    const account = await db.query.accountsTable.findFirst({ where: eq(accountsTable.id, 1) });
+    // If DB returns null (row missing) treat as disabled; if query throws, assume still enabled
+    if (account === undefined || account === null) return false;
+    return Boolean(account.autoInvestEnabled);
+  } catch (e) {
+    // DB transient error — don't kill the session over it
+    logger.warn(e, "CT: isEnabled() DB query failed — assuming still enabled");
+    return true;
+  }
 }
 
 async function loop() {
@@ -334,34 +342,40 @@ async function loop() {
     _s.winConfidence = prediction.confidence;
     _s.direction     = prediction.direction;
 
-    // ── Pre-trade countdown ────────────────────────────────────────────────
+    // ── Pre-trade countdown (no DB checks inside — avoids false-stop on transient errors) ──
     _s.phase = "pre-trade";
     for (let t = PRE_TRADE_SECS; t > 0; t--) {
-      if (!(await isEnabled())) break;
       _s.preTradeIn = t;
-      _s.message    = `Prediction: ${prediction.direction} on ${asset} (${prediction.confidence}% confidence) — entering in ${t}s`;
+      _s.message    = `UP on ${asset} — ${prediction.confidence}% confidence — entering in ${t}s`;
       await sleep(1_000);
     }
     _s.preTradeIn = 0;
 
-    // Re-check enabled after countdown
-    if (!(await isEnabled())) continue;
+    // Only bail if user explicitly stopped (not on DB errors)
+    if (!(await isEnabled())) {
+      logger.info("CT: stopped by user during pre-trade countdown");
+      continue;
+    }
 
     // ── Check USDT balance ────────────────────────────────────────────────
+    logger.info({ asset, tradePercent }, "CT: post-countdown — fetching MEXC balance");
     let freeUsdt: number;
     try {
       freeUsdt = await getFreeBalance("USDT");
+      logger.info({ freeUsdt }, "CT: MEXC USDT balance fetched");
     } catch (e) {
-      logger.error(e, "CT: failed to fetch MEXC balance");
-      _s.phase = "error"; _s.message = `Could not read MEXC balance: ${(e as Error).message}`;
+      logger.error({ err: (e as Error).message }, "CT: failed to fetch MEXC balance");
+      _s.phase = "error"; _s.message = `Balance check failed: ${(e as Error).message}`;
       await sleep(10_000);
       continue;
     }
 
     const stake = parseFloat((freeUsdt * tradePercent / 100).toFixed(2));
+    logger.info({ freeUsdt, tradePercent, stake, MIN_STAKE_USDT }, "CT: computed stake");
     if (stake < MIN_STAKE_USDT) {
-      _s.phase   = "waiting";
-      _s.message = `MEXC USDT balance too low (${freeUsdt.toFixed(2)} free) — need ≥ ${MIN_STAKE_USDT} USDT`;
+      _s.phase   = "error";
+      _s.message = `Balance too low: ${freeUsdt.toFixed(4)} USDT free, need ≥ ${MIN_STAKE_USDT} USDT to trade`;
+      logger.warn({ freeUsdt, stake }, "CT: balance too low to trade");
       await sleep(15_000);
       continue;
     }
@@ -370,14 +384,15 @@ async function loop() {
     // ── Execute UP order on MEXC spot ─────────────────────────────────────
     _s.phase          = "trading";
     _s.tradeStartedAt = null;
-    _s.message        = `UP on ${asset} — ${prediction.reason} — buying ${stake.toFixed(2)} USDT`;
+    _s.message        = `Placing BUY: ${asset} ${stake.toFixed(4)} USDT…`;
     logger.info({ asset, confidence: prediction.confidence, upScore: prediction.upScore, stake }, "CT: placing market BUY");
 
     let buy;
     try {
       buy = await marketBuy(asset, stake);
+      logger.info({ orderId: buy.orderId, avgPrice: buy.avgPrice, baseQty: buy.baseQty, quoteQty: buy.quoteQty }, "CT: BUY filled");
     } catch (e) {
-      logger.error(e, "CT: MEXC buy failed");
+      logger.error({ err: (e as Error).message }, "CT: MEXC marketBuy failed");
       _s.phase = "error"; _s.message = `Buy failed: ${(e as Error).message}`;
       await sleep(10_000);
       continue;
