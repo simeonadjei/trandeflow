@@ -34,7 +34,8 @@ const CHECK_INTERVAL_MS = 5_000;   // check TP/SL every 5s while holding
 const TAKE_PROFIT_PCT   = 0.008;   // +0.8%
 const STOP_LOSS_PCT     = 0.004;   // -0.4%
 const PRE_TRADE_SECS    = 5;       // countdown before order fires
-const MIN_SUPER_SCORE   = 11;      // out of 12 — raised from 10 to 11 for stricter filter
+const MIN_SUPER_SCORE   = 10;      // primary asset must score ≥10/12
+const SECONDARY_SCORE   = 7;       // secondary asset (confirmation) must score ≥7/12
 const MIN_STAKE_USDT    = 5;       // MEXC minimum notional
 const WIN_RATE_FLOOR    = 65;      // skip all trading if golden window win rate < 65%
 
@@ -480,26 +481,36 @@ async function loop() {
       _s.direction     = displayPred.direction;
     }
 
-    // Require BOTH BTC and ETH to confirm ≥11/12
-    const btcConfirmed = predBTC !== null && predBTC.upScore >= MIN_SUPER_SCORE;
-    const ethConfirmed = predETH !== null && predETH.upScore >= MIN_SUPER_SCORE;
-    const bothConfirmed = btcConfirmed && ethConfirmed;
+    // Pick primary (higher score) and secondary (lower score)
+    const btcScore = predBTC?.upScore ?? 0;
+    const ethScore = predETH?.upScore ?? 0;
+    const primaryAsset    = btcScore >= ethScore ? "BTCUSDT" : "ETHUSDT";
+    const secondaryAsset  = primaryAsset === "BTCUSDT" ? "ETHUSDT" : "BTCUSDT";
+    const primaryPred     = primaryAsset  === "BTCUSDT" ? predBTC : predETH;
+    const secondaryPred   = secondaryAsset === "BTCUSDT" ? predBTC : predETH;
+    const primaryScore    = primaryPred?.upScore  ?? 0;
+    const secondaryScore  = secondaryPred?.upScore ?? 0;
+
+    // Primary ≥10/12, secondary ≥7/12
+    const primaryOk   = primaryPred  !== null && primaryScore  >= MIN_SUPER_SCORE;
+    const secondaryOk = secondaryPred !== null && secondaryScore >= SECONDARY_SCORE;
+    const bothConfirmed = primaryOk && secondaryOk;
     _s.bothAssetsConfirmed = bothConfirmed;
 
     if (!bothConfirmed) {
-      const btcStr = predBTC ? `BTC ${predBTC.upScore}/12` : "BTC failed";
-      const ethStr = predETH ? `ETH ${predETH.upScore}/12` : "ETH failed";
+      const primStr = primaryPred  ? `${primaryAsset.replace("USDT","")} ${primaryScore}/12 (need ≥${MIN_SUPER_SCORE})`  : `${primaryAsset.replace("USDT","")} failed`;
+      const secStr  = secondaryPred ? `${secondaryAsset.replace("USDT","")} ${secondaryScore}/12 (need ≥${SECONDARY_SCORE})` : `${secondaryAsset.replace("USDT","")} failed`;
       _s.phase   = "golden-wait";
-      _s.message = `Both assets need ≥${MIN_SUPER_SCORE}/12 — ${btcStr}, ${ethStr} — retrying in 10s`;
-      logEvent(`Dual-asset check: ${btcStr}, ${ethStr} — need both ≥${MIN_SUPER_SCORE}/12`);
+      _s.message = `Dual check failed — ${primStr}, ${secStr} — retrying in 10s`;
+      logEvent(`Dual-asset check: ${primStr} | ${secStr}`);
       await sleep(WINDOW_SCAN_MS);
       continue;
     }
 
-    // Pick the asset with the higher score to trade
-    const asset = (predBTC!.upScore >= predETH!.upScore) ? "BTCUSDT" : "ETHUSDT";
-    const bestPred = asset === "BTCUSDT" ? predBTC! : predETH!;
-    logEvent(`DUAL CONFIRMED: BTC ${predBTC!.upScore}/12 + ETH ${predETH!.upScore}/12 — trading ${asset}`);
+    // Trade the primary (stronger) asset
+    const asset = primaryAsset;
+    const bestPred = primaryPred!;
+    logEvent(`DUAL CONFIRMED: ${primaryAsset.replace("USDT","")} ${primaryScore}/12 (primary) + ${secondaryAsset.replace("USDT","")} ${secondaryScore}/12 (secondary) — trading ${asset}`);
     logEvent(`SUPER SIGNAL: ${asset} UP ${bestPred.upScore}/12 (${bestPred.confidence}% confidence) — TRADING!`);
 
     // ── Pre-trade countdown ───────────────────────────────────────────────
