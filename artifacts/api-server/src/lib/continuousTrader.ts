@@ -390,13 +390,11 @@ async function loop() {
       logEvent(`BUY filled: orderId=${buy.orderId} qty=${buy.baseQty} @ ${buy.avgPrice} spent=${buy.quoteQty}`);
     } catch (e) {
       const errMsg = (e as Error).message;
-      logEvent(`ERROR: marketBuy failed — ${errMsg}`);
+      logEvent(`ERROR: marketBuy failed — ${errMsg} — retrying in 30s`);
       _s.phase   = "error";
-      _s.message = `Buy failed — session stopped. Error: ${errMsg}. Restart the bot to try again.`;
-      await db.update(accountsTable).set({ autoInvestEnabled: false }).where(eq(accountsTable.id, 1));
-      _s.active  = false;
-      _loopRunning = false;
-      return;
+      _s.message = `Buy failed: ${errMsg}. Retrying in 30s…`;
+      await sleep(30_000);
+      continue;
     }
 
     // Guard: MEXC returned zero fill — order was accepted but not executed
