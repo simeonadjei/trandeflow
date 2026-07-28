@@ -124,7 +124,6 @@ function TradeTimer({ closedAt, duration, createdAt }: { closedAt: string | null
 
 export default function Trade() {
   const [selectedSymbol, setSelectedSymbol] = useState("EURUSD");
-  const [amount, setAmount] = useState(1);
   const [tradePercent, setTradePercent] = useState(50);
   const [showAssets, setShowAssets] = useState(false);
   const [session, setSession] = useState<any>(null);
@@ -251,6 +250,16 @@ export default function Trade() {
     ? (account?.demoBalance ?? 0)
     : realEffectiveBalance;
   const displayCurrency = isDemo ? "GHS" : (account?.mexcConnected ? "USDT" : "GHS");
+
+  // Stake is always derived from the % slider — minimum 1 unit
+  const amount = Math.max(1, parseFloat(((displayBalance * tradePercent) / 100).toFixed(2)));
+
+  // When the user types a manual amount, back-calculate the matching %
+  const handleManualAmount = (val: number) => {
+    if (!val || val <= 0 || displayBalance <= 0) return;
+    const pct = Math.min(100, Math.max(1, Math.round((val / displayBalance) * 100)));
+    setTradePercent(pct);
+  };
   const modeTrades = trades?.filter((t) => (isDemo ? t.isDemo : !t.isDemo)) ?? [];
   const openTrades = modeTrades.filter((t) => t.status === "OPEN");
   const closedTrades = modeTrades.filter((t) => t.status !== "OPEN").slice(0, 15);
@@ -595,27 +604,22 @@ export default function Trade() {
               </div>
             </div>
 
-            {/* Manual stake amount (for manual UP/DOWN buttons) */}
+            {/* Stake amount — linked to % slider above */}
             <div className="mb-4">
-              <label className="text-xs text-muted-foreground font-medium mb-1.5 block">Manual Stake ({displayCurrency})</label>
+              <label className="text-xs text-muted-foreground font-medium mb-1.5 block">
+                Stake per trade ({displayCurrency})
+                <span className="ml-1.5 text-primary font-bold">{tradePercent}% of balance</span>
+              </label>
               <input
                 type="number"
                 min={1}
                 value={amount}
-                onChange={(e) => setAmount(Number(e.target.value))}
+                onChange={(e) => handleManualAmount(Number(e.target.value))}
                 className="w-full bg-card border border-border rounded-lg px-3 py-2 text-sm font-mono font-semibold focus:outline-none focus:border-primary transition-colors"
               />
-              <div className="flex gap-1.5 mt-2">
-                {[1, 5, 10, 25].map((v) => (
-                  <button
-                    key={v}
-                    onClick={() => setAmount(v)}
-                    className={`flex-1 py-1 text-xs rounded font-medium transition-colors ${amount === v ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground hover:bg-secondary/80"}`}
-                  >
-                    {v}
-                  </button>
-                ))}
-              </div>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Adjust the % slider above to change this, or type an amount to sync the slider.
+              </p>
             </div>
 
             {/* Payout info */}
