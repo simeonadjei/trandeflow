@@ -447,7 +447,8 @@ export default function Trade() {
     : (account?.mexcFreeUsdt ?? 0);
 
   // Stake is always derived from the % slider — minimum 1 unit
-  const amount = Math.max(1, parseFloat(((displayBalance * tradePercent) / 100).toFixed(2)));
+  // Floor (not round) to match the bot's stake logic — rounding up can exceed actual balance
+  const amount = Math.max(1, Math.floor(displayBalance * tradePercent) / 100);
 
   // When the user types a manual amount, back-calculate the matching %
   const handleManualAmount = (val: number) => {
@@ -494,7 +495,7 @@ export default function Trade() {
           {/* Balance + session profit */}
           <div className="text-right">
             <div className={`font-bold text-sm ${isDemo ? "text-purple-300" : "text-primary"}`}>
-              {displayCurrency} {displayBalance.toFixed(2)}
+              {displayCurrency} {isDemo ? displayBalance.toFixed(2) : displayBalance.toFixed(4)}
             </div>
             <div className="text-[10px] leading-none flex items-center justify-end gap-1">
               {!isDemo && session?.active && (
@@ -799,7 +800,7 @@ export default function Trade() {
               <div className="flex justify-between text-[11px] mt-1.5">
                 <span className="text-muted-foreground">Stake per trade:</span>
                 <span className="font-mono font-semibold text-foreground">
-                  {displayCurrency} {((displayBalance * tradePercent) / 100).toFixed(2)}
+                  {displayCurrency} {(Math.floor(displayBalance * tradePercent) / 100).toFixed(4)}
                 </span>
               </div>
             </div>
