@@ -1,17 +1,19 @@
 /**
- * Golden Window Analyzer — v2
- * ────────────────────────────
+ * Golden Window Analyzer — v3 (hour-only)
+ * ─────────────────────────────────────────
  * Fetches 90 days of 1h candles for BTC + ETH (3 batches of up to 1000),
- * buckets them by (weekday × hour), and finds the one (weekday, hour) slot
- * that historically has the highest directional win rate.
+ * buckets them by UTC hour only (24 slots, ~180 samples each), and picks the
+ * hour with the highest historical directional win rate.
  *
  * "Win" = the 1h candle closed higher than it opened.
  *
- * Upgrades over v1:
- *   - 90-day history (3× more data)
- *   - Day-of-week analysis: finds the best "Tuesday 14:00 UTC" not just "14:00 UTC"
- *   - Minimum sample size: ≥10 candles per slot before trusting it
- *   - Win rate floor: best slot must be ≥65% to be actionable
+ * Why hour-only (not weekday×hour):
+ *   - 24 slots × ~7.5 samples per week × 13 weeks ≈ 180 samples per slot
+ *   - 168 weekday×hour slots get only ~13 samples each — severe overfitting risk
+ *   - Hour-only lets the bot trade every day rather than once per week
+ *
+ * Minimum sample size: ≥10 candles per slot before trusting it
+ * Win rate floor: best slot must be ≥65% to be actionable
  * Result is cached for 6 hours; stale cache is returned on error.
  */
 
@@ -50,7 +52,6 @@ export interface GoldenWindowResult {
 // ─── Constants ────────────────────────────────────────────────────────────────
 const WIN_RATE_FLOOR = 65;  // minimum historical win rate to trade
 const MIN_SAMPLES    = 10;  // minimum candles in a slot before trusting it
-const WEEKDAY_LABELS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 
 // ─── In-memory cache ─────────────────────────────────────────────────────────
 let _cache:    GoldenWindowResult | null = null;
@@ -102,82 +103,42 @@ export async function getGoldenWindow(forceRefresh = false): Promise<GoldenWindo
     const allCandles = [...btcCandles, ...ethCandles];
     logger.info({ btc: btcCandles.length, eth: ethCandles.length }, "GoldenWindow v2: candles fetched");
 
-    // ── Weekday×Hour buckets (168 slots) ────────────────────────────────────
-    // buckets[weekday][hour] = { wins, total }
-    const wb: Array<Array<{ wins: number; total: number }>> = Array.from(
-      { length: 7 },
-      () => Array.from({ length: 24 }, () => ({ wins: 0, total: 0 }))
-    );
-
-    // ── Hour-only buckets (24 slots, for bar chart) ──────────────────────────
+    // ── Hour-only buckets (24 slots) ─────────────────────────────────────────
     const hb: Array<{ wins: number; total: number }> = Array.from(
       { length: 24 },
       () => ({ wins: 0, total: 0 })
     );
 
     for (const c of allCandles) {
-      const d = new Date(c.openTime);
-      const weekday = d.getUTCDay();
-      const hour    = d.getUTCHours();
+      const hour = new Date(c.openTime).getUTCHours();
       hb[hour].total++;
-      wb[weekday][hour].total++;
-      if (c.close > c.open) {
-        hb[hour].wins++;
-        wb[weekday][hour].wins++;
-      }
+      if (c.close > c.open) hb[hour].wins++;
     }
 
-    // ── Build hourly distribution (for bar chart) ────────────────────────────
+    // ── Find best hour (≥MIN_SAMPLES) and build distribution ─────────────────
     let bestHourRate = 0;
     let bestHour = 0;
     const distribution: HourStat[] = hb.map((b, hour) => {
-      const winRate = b.total > 0
+      const winRate = b.total >= MIN_SAMPLES
         ? Math.round((b.wins / b.total) * 1000) / 10
-        : 50;
-      if (winRate > bestHourRate) { bestHourRate = winRate; bestHour = hour; }
+        : 50; // default when not enough data
+      if (b.total >= MIN_SAMPLES && winRate > bestHourRate) {
+        bestHourRate = winRate;
+        bestHour = hour;
+      }
       return { hour, wins: b.wins, total: b.total, winRate };
     });
 
-    // ── Find best (weekday, hour) slot ───────────────────────────────────────
-    let bestSlotWinRate = 0;
-    let bestSlotWeekday: number | null = null;
-    let bestSlotHour = bestHour;
-    let bestSlotSamples = 0;
-
-    for (let wd = 0; wd < 7; wd++) {
-      for (let h = 0; h < 24; h++) {
-        const b = wb[wd][h];
-        if (b.total < MIN_SAMPLES) continue; // not enough data
-        const rate = (b.wins / b.total) * 100;
-        if (rate > bestSlotWinRate) {
-          bestSlotWinRate = rate;
-          bestSlotWeekday = wd;
-          bestSlotHour    = h;
-          bestSlotSamples = b.total;
-        }
-      }
-    }
-
-    // Round win rate to 1 dp
-    bestSlotWinRate = Math.round(bestSlotWinRate * 10) / 10;
-
-    // ── Decide final golden window ───────────────────────────────────────────
-    // If the weekday+hour slot beats the pure-hour best by >2pp, use it.
-    // Otherwise fall back to hour-only (more trading opportunities).
-    const useWeekday = bestSlotWeekday !== null && bestSlotWinRate >= WIN_RATE_FLOOR;
-
     const result: GoldenWindowResult = {
       asset:                "BTCUSDT+ETHUSDT",
-      goldenHour:           useWeekday ? bestSlotHour    : bestHour,
-      goldenWeekday:        useWeekday ? bestSlotWeekday : null,
-      goldenWeekdayLabel:   useWeekday && bestSlotWeekday !== null
-                              ? WEEKDAY_LABELS[bestSlotWeekday]
-                              : null,
-      winRate:              useWeekday ? bestSlotWinRate  : Math.round(bestHourRate * 10) / 10,
-      bestSlotSamples:      useWeekday ? bestSlotSamples : hb[bestHour].total,
+      goldenHour:           bestHour,
+      goldenWeekday:        null,   // hour-only mode — trades every day
+      goldenWeekdayLabel:   null,
+      winRate:              Math.round(bestHourRate * 10) / 10,
+      bestSlotSamples:      hb[bestHour].total,
       totalCandlesAnalyzed: allCandles.length,
       distribution,
-      aboveFloor:           (useWeekday ? bestSlotWinRate : bestHourRate) >= WIN_RATE_FLOOR,
+      aboveFloor:           bestHourRate >= WIN_RATE_FLOOR,
       computedAt:           Date.now(),
     };
 
@@ -237,18 +198,9 @@ export function minsToGoldenWindow(
   const now         = new Date();
   const currentMins = now.getUTCHours() * 60 + now.getUTCMinutes();
 
-  if (goldenWeekday === null || goldenWeekday === undefined) {
-    // Hour-only mode
-    const goldenMins = goldenHour * 60;
-    let diff = goldenMins - 30 - currentMins;
-    if (diff < 0) diff += 1440;
-    return diff;
-  }
-
-  // Weekday+hour mode: find minutes until window opens (goldenWeekday × 1440 + goldenHour×60 - 30)
-  const currentWeekdayMins = now.getUTCDay() * 1440 + currentMins;
-  const targetWeekdayMins  = goldenWeekday  * 1440 + goldenHour * 60 - 30;
-  let diff = targetWeekdayMins - currentWeekdayMins;
-  if (diff <= 0) diff += 7 * 1440; // wrap to next week
+  // Hour-only mode (goldenWeekday is always null in v3)
+  const goldenMins = goldenHour * 60;
+  let diff = goldenMins - 30 - currentMins;
+  if (diff < 0) diff += 1440;
   return diff;
 }

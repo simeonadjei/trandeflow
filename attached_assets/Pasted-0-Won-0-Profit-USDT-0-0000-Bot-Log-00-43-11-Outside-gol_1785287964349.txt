@@ -1,0 +1,45 @@
+0 Won 0 Profit +USDT 0.0000 Bot Log [00:43:11] Outside golden window — next opens in 0 min [00:43:11] WARN: could not compute golden window — running in standard mode [00:43:10] Super Bot starting — computing 30-day golden window… is this okay
+
+That warning means the 90-day candle fetch failed — the bot fell back to "no golden window" and immediately treated itself as outside a non-existent window. Let me pull the full API server logs to see the actual error:
+
+The log from the session isn't captured (the server was already running when you started it). Let me look directly at what getGoldenWindow does and why it might fail silently:
+
+No, this is not okay — the bot can't trade at all without a golden window. The kline batch fetch is failing silently. Let me check why:
+
+Found it — MEXC rejected 1h as an invalid interval. Let me check which interval string it actually accepts:
+
+60m works, 1h doesn't. Let me check the other intervals used in superPredict too:
+
+4h, 15m, 1m all work — only 1h is wrong. It must be 60m. Fix both files in parallel:
+
+Not okay at all — that bug meant zero indicators were actually working. Every 1h candle fetch was returning a 400 error from MEXC, so all the 1h momentum indicators (EMA9>EMA21, RSI zone, Price>EMA50, volume spike) were silently falling back to NEUTRAL, and the golden window had no data to analyze.
+
+Fixed: "1h" → "60m" in both the golden window fetcher and the 12-indicator suite. Pushed as d838675.
+
+Stop and restart the bot session so it re-fetches the golden window with the correct interval — you should now see it log a proper result like "Golden window: Tuesdays at 14:00 UTC — 68.5% win rate (12 samples)".
+
+Bot Log [00:54:01] Outside golden window — next opens in 6516 min [00:53:31] Outside golden window — next opens in 6517 min [00:53:30] Golden window: Sundays at 14:00 UTC — 100% win rate (18 samples / 3000 candles total) [00:53:30] Super Bot starting — computing 30-day golden window…explain how did spot Sunday 14:00
+
+Here's exactly how it happened — and why you should be skeptical of it:
+
+How the algorithm works:
+
+Downloads ~3,000 1h candles (BTC + ETH combined, ~90 days)
+Groups them into 168 buckets: every (weekday × hour) combination — Monday 00:00, Monday 01:00 … Sunday 23:00
+For each bucket, counts: how many candles closed higher than they opened?
+Sunday 14:00 UTC had 18 candles across both assets, and all 18 happened to be green → 100%
+Why 100% is misleading: 90 days ÷ 7 days = ~13 Sundays. Multiply by 2 assets = ~26 samples at most for any given weekday+hour slot. Sunday 14:00 only got 18, meaning some Sundays were missing from the data. With 18 coin flips, landing 18 heads is unlikely but not impossible — and across 168 slots you're essentially running 168 different coin flip experiments and picking the most extreme result. That's pure overfitting.
+
+The real consequence: The next Sunday 14:00 UTC is 4.5 days away. The bot will sit completely idle until then — and when it finally trades, the "100% win rate" backing it is based on 18 data points, not 180.
+
+The fix: drop weekday granularity entirely and use the 24-hour buckets only. Each hour slot then gets ~180 samples (3,000 ÷ 24 × 2 assets) — far more reliable. The best hour across the full dataset is a much sturdier signal than the best weekday+hour, and the bot can trade every day instead of once a week.
+
+Want me to switch it back to hour-only mode?
+
+Yes
+
+You've reached your monthly free quota limit. It will reset on August 5, 2026.
+
+TradeFlow
+Website
+Open TradeFlow
