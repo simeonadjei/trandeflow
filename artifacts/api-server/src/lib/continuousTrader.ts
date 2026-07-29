@@ -125,8 +125,9 @@ let _s: SessionStatus = {
 };
 
 let _sessionStartBalanceUsdt: number | null = null;
-/** Last UTC date string (YYYY-MM-DD) that a trade was placed */
-let _lastTradeDate: string | null = null;
+/** Cooldown: earliest time (ms) the bot may place the NEXT trade */
+let _nextTradeAllowedAt: number = 0;
+const POST_TRADE_COOLDOWN_MS = 120_000; // 2-min cooldown between consecutive trades
 
 export function getSessionStatus(): SessionStatus { return { ..._s, recentEvents: [..._events] }; }
 
@@ -297,10 +298,6 @@ async function isEnabled(): Promise<boolean> {
   }
 }
 
-function todayUTCString(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 async function loop() {
   // ── Step 1: Compute the golden window on startup ──────────────────────────
   logEvent("Super Bot starting — computing 30-day golden window…");
@@ -378,20 +375,14 @@ async function loop() {
     _s.inGoldenWindow     = inWindow;
     _s.minsToGoldenWindow = minsAway;
 
-    // ── Already traded today? ─────────────────────────────────────────────
-    const todayStr = todayUTCString();
-    const alreadyTraded = _lastTradeDate === todayStr;
-    _s.todayTraded = alreadyTraded;
+    _s.todayTraded = false; // no per-day gate — bot runs until stopped or loss limit hit
 
-    if (alreadyTraded) {
-      // One trade per day — rest until tomorrow's golden window
-      const hoursLeft = Math.max(0, (24 * 60 - (new Date().getUTCHours() * 60 + new Date().getUTCMinutes()))) / 60;
+    // ── Cooldown between consecutive trades ───────────────────────────────
+    const cooldownLeft = _nextTradeAllowedAt - Date.now();
+    if (cooldownLeft > 0) {
       _s.phase   = "waiting";
-      _s.message = `Today's trade done. Next golden window in ~${minsAway > 0 ? minsAway + " min" : "< 1 min"} (resets at midnight UTC)`;
-      if (Math.round(hoursLeft * 10) % 300 === 0) {
-        logEvent(`Today's trade complete — resting ${hoursLeft.toFixed(1)}h until tomorrow`);
-      }
-      await sleep(60_000);
+      _s.message = `Post-trade cooldown — next scan in ${Math.ceil(cooldownLeft / 1000)}s`;
+      await sleep(Math.min(cooldownLeft, 5_000));
       continue;
     }
 
@@ -580,9 +571,6 @@ async function loop() {
 
     const entryPrice  = buy.avgPrice;
     _s.tradeStartedAt = Date.now();
-    // Mark today as traded IMMEDIATELY after buy so a crash doesn't double-trade
-    _lastTradeDate    = todayUTCString();
-    _s.todayTraded    = true;
     logEvent(`SUPER trade open: entry @ ${entryPrice} — holding up to 5 min (TP +0.8%, SL -0.4%)`);
 
     let tradeId: number | null = null;
@@ -666,8 +654,13 @@ async function loop() {
     _s.sessionTrades++;
     if (won) _s.sessionWins++;
     _s.sessionProfit += profitUsdt;
+
+    // Set cooldown before next trade
+    _nextTradeAllowedAt = Date.now() + POST_TRADE_COOLDOWN_MS;
+
     _s.phase   = "waiting";
-    _s.message = `${won ? "✓ WON" : profitUsdt < 0 ? "✗ LOST" : "= FLAT"} ${profitUsdt >= 0 ? "+" : ""}${profitUsdt.toFixed(4)} USDT on ${asset} (${exitReason}) — resting until next golden window`;
+    _s.message = `${won ? "✓ WON" : profitUsdt < 0 ? "✗ LOST" : "= FLAT"} ${profitUsdt >= 0 ? "+" : ""}${profitUsdt.toFixed(4)} USDT on ${asset} (${exitReason}) — cooling down 2 min then scanning again`;
+    logEvent(`2-min cooldown started — will scan again at ${new Date(_nextTradeAllowedAt).toLocaleTimeString("en-GB", { hour12: false })} UTC`);
 
     await sleep(500);
   }
@@ -701,6 +694,8 @@ export async function startSession(tradePercentage: number) {
     lastProfit:    0,
     message:       "Starting super bot…",
   };
+
+  _nextTradeAllowedAt = 0; // clear any leftover cooldown on fresh session start
 
   if (!_loopRunning) {
     _loopRunning = true;

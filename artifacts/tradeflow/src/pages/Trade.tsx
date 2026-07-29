@@ -143,17 +143,17 @@ function SuperBotPanel({ session, goldenWindow }: { session: any; goldenWindow: 
   const hrsRem  = hoursTo % 24;
   const mins    = minsTo % 60;
 
-  const isTraded  = session?.todayTraded ?? false;
   const isWait    = session?.phase === "golden-wait";
   const isAnalyze = session?.phase === "analyzing" || session?.phase === "pre-trade";
   const isTrading = session?.phase === "trading";
+  const isCooldown = session?.phase === "waiting" && !isTrading;
 
   let phaseText = "WAITING FOR WINDOW";
   let PhaseIcon = Clock;
 
-  if (isTraded) {
-    phaseText = "TODAY COMPLETE";
-    PhaseIcon = CheckCircle;
+  if (isCooldown) {
+    phaseText = "COOLDOWN";
+    PhaseIcon = Clock;
   } else if (isTrading) {
     phaseText = "TRADING NOW";
     PhaseIcon = Activity;
@@ -179,9 +179,9 @@ function SuperBotPanel({ session, goldenWindow }: { session: any; goldenWindow: 
         <Target className="w-4 h-4 text-yellow-500" />
         <h3 className="font-bold text-sm tracking-widest text-foreground uppercase">Super Bot</h3>
         <div className={`ml-auto flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded border uppercase tracking-wider ${
-          isTraded ? "bg-profit/10 border-profit/30 text-profit" :
           isTrading ? "bg-yellow-400/10 border-yellow-400/30 text-yellow-400" :
           inWindow ? "bg-yellow-400/10 border-yellow-400/30 text-yellow-400 live-pulse" :
+          isCooldown ? "bg-secondary border-border text-muted-foreground" :
           "bg-secondary border-border text-muted-foreground"
         }`}>
           <PhaseIcon className="w-3 h-3" />
@@ -198,7 +198,7 @@ function SuperBotPanel({ session, goldenWindow }: { session: any; goldenWindow: 
       )}
 
       <div className={`relative overflow-hidden border rounded-xl p-4 transition-all duration-700 ${
-        inWindow && !isTraded && aboveFloor
+        inWindow && aboveFloor
           ? "border-yellow-500/50 bg-yellow-500/5 shadow-[0_0_15px_rgba(234,179,8,0.1)] glow-gold mb-4"
           : "border-border bg-background mb-4"
       }`}>
@@ -223,22 +223,16 @@ function SuperBotPanel({ session, goldenWindow }: { session: any; goldenWindow: 
           </div>
         </div>
 
-        {!inWindow && !isTraded && (
+        {!inWindow && (
           <div className="mt-3 pt-3 border-t border-border flex items-center justify-between">
             <span className="text-xs text-muted-foreground">Opens in</span>
             <span className="text-sm font-mono font-bold">{countdownStr}</span>
           </div>
         )}
-        {inWindow && !isTraded && aboveFloor && (
+        {inWindow && aboveFloor && (
           <div className="mt-3 pt-3 border-t border-yellow-500/20 flex items-center justify-between">
             <span className="text-xs text-yellow-500 font-bold flex items-center gap-1.5"><Zap className="w-3.5 h-3.5" /> WINDOW ACTIVE</span>
-            <span className="text-xs font-mono text-yellow-500/80 live-pulse">TRADING OPPORTUNITY</span>
-          </div>
-        )}
-        {isTraded && (
-          <div className="mt-3 pt-3 border-t border-border flex items-center justify-between">
-            <span className="text-xs text-profit font-bold flex items-center gap-1.5"><CheckCircle className="w-3.5 h-3.5" /> TODAY'S TRADE DONE</span>
-            <span className="text-xs font-mono text-muted-foreground">Next in {countdownStr}</span>
+            <span className="text-xs font-mono text-yellow-500/80 live-pulse">SCANNING FOR SIGNAL</span>
           </div>
         )}
 
@@ -264,7 +258,7 @@ function SuperBotPanel({ session, goldenWindow }: { session: any; goldenWindow: 
         </div>
       </div>
 
-      {session?.indicators && (isWait || isAnalyze || inWindow || isTrading) && !isTraded && (
+      {session?.indicators && (isWait || isAnalyze || inWindow || isTrading || isCooldown) && (
         <div>
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5"><Radio className="w-3 h-3" /> Live Indicators</span>
