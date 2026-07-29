@@ -64,7 +64,7 @@ let _computing = false;
  */
 async function fetchHistory90d(symbol: string) {
   const BATCH = 1000;
-  const INTERVAL = "1h";
+  const INTERVAL = "60m"; // MEXC uses "60m", not "1h"
 
   // Batch 1: most recent 1000 hours
   const batch1 = await getKlines(symbol, BATCH, INTERVAL);

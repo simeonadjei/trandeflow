@@ -169,7 +169,7 @@ interface SuperPrediction {
 async function superPredict(symbol: string): Promise<SuperPrediction> {
   const [c4h, c1h, c15m, c1m] = await Promise.all([
     getKlines(symbol, 60, "4h"),
-    getKlines(symbol, 60, "1h"),
+    getKlines(symbol, 60, "60m"), // MEXC uses "60m", not "1h"
     getKlines(symbol, 30, "15m"),
     getKlines(symbol, 30, "1m"),
   ]);
